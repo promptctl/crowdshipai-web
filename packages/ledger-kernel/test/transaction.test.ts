@@ -67,8 +67,19 @@ describe('constructors reject illegal inputs as values, not exceptions', () => {
     expect(built).toEqual({ ok: false, error: { kind: 'no-transfers' } });
   });
 
-  test('empty ids are rejected with their label', () => {
-    expect(accountId('')).toEqual({ ok: false, error: { kind: 'empty', label: 'accountId' } });
+  test('blank ids — empty or whitespace-only — are rejected with their label', () => {
+    expect(accountId('')).toEqual({ ok: false, error: { kind: 'blank', label: 'accountId' } });
+    expect(accountId('   ')).toEqual({ ok: false, error: { kind: 'blank', label: 'accountId' } });
+    expect(accountId('\n\t')).toEqual({ ok: false, error: { kind: 'blank', label: 'accountId' } });
+  });
+
+  test('a raw object cannot pose as a Transfer — the brand is unforgeable', () => {
+    const a = acc('a');
+    const b = acc('b');
+    // @ts-expect-error Transfer is nominal; only transfer() can produce one, so the
+    // same-account invariant is carried by the type, not just checked in a function.
+    const forged: Transfer = { from: a, to: b, amount: coins(1n) };
+    void forged;
   });
 });
 
@@ -103,6 +114,17 @@ describe('the transaction algebra', () => {
     expect(entries.filter((e) => e.direction === 'debit')).toHaveLength(2);
     expect(entries.filter((e) => e.direction === 'credit')).toHaveLength(2);
   });
+
+  test('a pass-through intermediary nets zero and is omitted from the deltas', () => {
+    const txn = txnOf([
+      must(transfer(acc('a'), acc('b'), coins(7n))),
+      must(transfer(acc('b'), acc('c'), coins(7n))),
+    ]);
+    const net = netEffect(txn);
+    expect(net.get(acc('a'))).toBe(-7n);
+    expect(net.get(acc('c'))).toBe(7n);
+    expect(net.has(acc('b'))).toBe(false); // touched but net zero — not a balance change
+  });
 });
 
 describe('the central theorem', () => {
@@ -118,17 +140,24 @@ describe('the central theorem', () => {
     fc.assert(fc.property(arbTransaction, (txn) => sumOf(netEffect(txn)) === 0n));
   });
 
-  test('netEffect equals summing the signed entries independently (projection agrees with source)', () => {
+  test('netEffect matches deltas derived directly from transfers (independent oracle, not via entriesOf)', () => {
     fc.assert(
       fc.property(arbTransaction, (txn) => {
-        const fromEntries = new Map<AccountId, bigint>();
-        for (const e of entriesOf(txn)) {
-          const signed = e.direction === 'credit' ? e.amount : -e.amount;
-          fromEntries.set(e.account, (fromEntries.get(e.account) ?? 0n) + signed);
+        // Oracle: compute expected balance deltas straight from the transfers,
+        // never touching entriesOf/signedEffect. A debit/credit swap or a dropped
+        // leg in the projection would diverge from this and fail the test
+        // [LAW:behavior-not-structure].
+        const expected = new Map<AccountId, bigint>();
+        for (const t of txn.transfers) {
+          expected.set(t.to, (expected.get(t.to) ?? 0n) + t.amount);
+          expected.set(t.from, (expected.get(t.from) ?? 0n) - t.amount);
+        }
+        for (const [id, v] of [...expected]) {
+          if (v === 0n) expected.delete(id);
         }
         const net = netEffect(txn);
-        if (fromEntries.size !== net.size) return false;
-        return [...net].every(([id, v]) => fromEntries.get(id) === v);
+        if (net.size !== expected.size) return false;
+        return [...expected].every(([id, v]) => net.get(id) === v);
       }),
     );
   });
