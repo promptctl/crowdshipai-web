@@ -15,7 +15,10 @@ Instead, the authoritative primitive here is the **`Transfer`**: `amount` leaves
 `from` and arrives at `to`. A transfer is a matched `+amount / -amount` pair, so
 **a list of transfers cannot be unbalanced** — there is no code path that
 produces an illegal one. Balance is a property of the representation, not a rule
-we remember to enforce (`[LAW:types-are-the-program]`).
+we remember to enforce (`[LAW:types-are-the-program]`). `Transfer` is *nominal* —
+`transfer()` is the only way to obtain one — so its distinct-account invariant
+is carried by the type everywhere downstream, not merely checked in one function
+a second caller could sidestep (`[LAW:single-enforcer]`).
 
 `Entry` still exists, but as a *derived* debit/credit projection of the
 transfers (`entriesOf`), never a second source of truth that could drift from
