@@ -1,15 +1,17 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { BuilderAvatar } from '@/components/BuilderAvatar';
 import { LiveBadge } from '@/components/LiveBadge';
+import { OfferCard } from '@/components/OfferCard';
 import { StreamStage } from '@/components/StreamStage';
 import { getCatalog } from '@/data/catalog';
 
 /**
- * The builder channel page (discovery-41w.2): the three context views a builder
- * owns — their stream, their menu, their identity — on one surface. Reuses the
- * same StreamStage and reads the same menu/offer substrate as the watch surface,
- * so there is no second shop to keep in sync [LAW:one-source-of-truth].
+ * The builder channel page: the three context views a builder owns — their
+ * stream, their menu, their identity — on one surface. It renders the menu
+ * through the same OfferCard the watch surface uses, so the two cannot show a
+ * builder's offers differently [LAW:one-source-of-truth].
  */
 export default async function ChannelPage({ params }: { readonly params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -20,11 +22,7 @@ export default async function ChannelPage({ params }: { readonly params: Promise
   return (
     <main className="mx-auto max-w-5xl px-5 py-8">
       <div className="flex items-center gap-4">
-        <span
-          className="h-16 w-16 shrink-0 rounded-full"
-          style={{ background: `hsl(${stream.accentHue} 60% 45%)` }}
-          aria-hidden
-        />
+        <BuilderAvatar accentHue={stream.accentHue} className="h-16 w-16" />
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-chalk">{stream.builderName}</h1>
           <p className="mt-0.5 max-w-xl text-sm text-fog">{channel.bio}</p>
@@ -47,13 +45,7 @@ export default async function ChannelPage({ params }: { readonly params: Promise
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-fog">the menu</h2>
           <div className="flex flex-col gap-2">
             {channel.menu.map((offer) => (
-              <div key={offer.id} className="rounded-md border border-edge bg-surface-2 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-chalk">{offer.label}</span>
-                  <span className="text-xs font-semibold text-accent tabular-nums">◎{offer.priceCoins}</span>
-                </div>
-                <p className="mt-1 text-xs text-fog">{offer.effect.summary}</p>
-              </div>
+              <OfferCard key={offer.id} offer={offer} />
             ))}
           </div>
         </div>

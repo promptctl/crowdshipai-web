@@ -5,21 +5,19 @@ import Link from 'next/link';
 
 import type { ChannelView, ChatMessage, PricedOffer } from '@/data/types';
 
+import { BuilderAvatar } from './BuilderAvatar';
 import { Chat } from './Chat';
 import { Menu } from './Menu';
 import { StreamStage } from './StreamStage';
 
 /**
- * The watch surface: player + menu + chat in one view (discovery-41w.3, scaffold
- * ahead of the real-time stream layer). This client component is the single
- * owner of the live, mutating state — the chat log and the viewer's coin balance
- * [LAW:no-ambient-temporal-coupling]. Menu and Chat are pure children that
- * report intents up; nothing mutates state behind their backs.
+ * The watch surface: player, menu, and chat composed into one view. This client
+ * component is the single owner of the live, mutating state so its children can
+ * stay pure and nothing mutates behind their backs [LAW:no-ambient-temporal-coupling].
  *
- * Spending a coin here is a LOCAL optimistic effect: it decrements a fake wallet
- * and appends a fired-effect line to chat. The real money movement is the ledger
- * + settlement epics; this surface is shaped to call those at the same seam
- * where it currently fakes them [LAW:carrying-cost].
+ * Spending a coin is a LOCAL optimistic effect today. It is shaped to call the
+ * real ledger + settlement at the same seam where it currently fakes the
+ * movement, so wiring real money in is a swap, not a rewrite [LAW:carrying-cost].
  */
 export function WatchSurface({ channel }: { readonly channel: ChannelView }) {
   const { stream } = channel;
@@ -52,11 +50,7 @@ export function WatchSurface({ channel }: { readonly channel: ChannelView }) {
         <div>
           <StreamStage accentHue={stream.accentHue} isLive={stream.isLive} viewerCount={stream.viewerCount} size="stage" />
           <div className="mt-4 flex items-start gap-3">
-            <span
-              className="h-11 w-11 shrink-0 rounded-full"
-              style={{ background: `hsl(${stream.accentHue} 60% 45%)` }}
-              aria-hidden
-            />
+            <BuilderAvatar accentHue={stream.accentHue} className="h-11 w-11" />
             <div className="min-w-0">
               <h1 className="text-lg font-semibold text-chalk">{stream.title}</h1>
               <Link href={`/c/${stream.slug}`} className="text-sm text-accent hover:underline">

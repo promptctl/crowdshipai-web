@@ -1,9 +1,8 @@
 import type { ChatMessage } from '@/data/types';
 
 /**
- * The live chat column. A fired-effect line and a plain chat line are the same
- * type with different data (`firedOfferLabel` present or not), rendered by one
- * branch on a value — not two message systems [LAW:one-type-per-behavior]. Pure
+ * The live chat column. A fired effect and an ordinary line are one message
+ * type, not two parallel systems [LAW:one-type-per-behavior]. Pure
  * presentational; the message list and the send action are owned upstream.
  */
 export function Chat({
@@ -22,7 +21,10 @@ export function Chat({
       <div className="border-b border-edge px-3 py-2.5">
         <span className="text-xs font-semibold uppercase tracking-wider text-fog">chat</span>
       </div>
-      <div className="flex flex-1 flex-col justify-end gap-1.5 overflow-y-auto p-3 text-sm">
+      <div className="flex flex-1 flex-col overflow-y-auto p-3 text-sm">
+        {/* mt-auto bottom-pins a short log; when it overflows, the oldest lines
+            stay scrollable instead of being clipped above a justify-end edge. */}
+        <div className="mt-auto flex flex-col gap-1.5">
         {messages.map((m) =>
           m.firedOfferLabel !== undefined ? (
             <div
@@ -39,6 +41,7 @@ export function Chat({
             </div>
           ),
         )}
+        </div>
       </div>
       <form
         className="flex gap-2 border-t border-edge p-2.5"

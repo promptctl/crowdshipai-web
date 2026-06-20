@@ -2,6 +2,7 @@ import Link from 'next/link';
 
 import type { StreamSummary } from '@/data/types';
 
+import { BuilderAvatar } from './BuilderAvatar';
 import { StreamStage } from './StreamStage';
 
 /** One tile in the browse grid. Links into the channel's watch surface. */
@@ -13,11 +14,7 @@ export function StreamCard({ stream }: { readonly stream: StreamSummary }) {
     >
       <StreamStage accentHue={stream.accentHue} isLive={stream.isLive} viewerCount={stream.viewerCount} />
       <div className="mt-2.5 flex gap-3">
-        <span
-          className="mt-0.5 h-9 w-9 shrink-0 rounded-full"
-          style={{ background: `hsl(${stream.accentHue} 60% 45%)` }}
-          aria-hidden
-        />
+        <BuilderAvatar accentHue={stream.accentHue} className="mt-0.5 h-9 w-9" />
         <div className="min-w-0">
           <h3 className="truncate text-sm font-semibold text-chalk group-hover:text-accent">{stream.title}</h3>
           <p className="text-xs text-fog">{stream.builderName}</p>

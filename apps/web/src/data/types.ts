@@ -59,15 +59,16 @@ export interface ChatMessage {
   readonly id: string;
   readonly author: string;
   readonly text: string;
-  /** A fired-effect message renders differently from a plain chat line; both are just messages. */
+  /** Present when this line is a fired offer rather than typed text — so a fired
+   * effect and an ordinary message stay one type, not two parallel systems. */
   readonly firedOfferLabel?: string;
 }
 
 /**
  * The full watch context for one channel: the three views the builder owns —
- * their stream, their menu, their identity — composed into one surface
- * [LAW:decomposition]. This is what discovery-41w.2 calls "one surface composing
- * the three context views."
+ * their stream, their menu, their identity — composed so a surface fetches a
+ * builder's whole context in one read rather than stitching it from three
+ * [LAW:decomposition].
  */
 export interface ChannelView {
   readonly stream: StreamSummary;
