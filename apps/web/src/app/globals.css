@@ -1,0 +1,43 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens live here, once [LAW:one-source-of-truth]. Components reference
+ * semantic names (bg-surface, text-accent), never raw hex, so a restyle — and
+ * the goal says we WILL restyle and hate things — is a change in this block, not
+ * a sweep across every component [LAW:locality-or-seam].
+ */
+@theme {
+  --color-ink: #0a0a0b;
+  --color-surface: #121214;
+  --color-surface-2: #1a1a1e;
+  --color-edge: #2a2a30;
+  --color-fog: #8a8a94;
+  --color-chalk: #ededf0;
+  --color-accent: #ffb020;
+  --color-accent-dim: #c77f00;
+  --color-live: #ff3b5c;
+
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: var(--color-chalk);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A quiet animated pulse for the LIVE dot — one named place owns the keyframes. */
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.live-dot {
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
