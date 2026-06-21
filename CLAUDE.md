@@ -27,6 +27,26 @@ And we don't say "influencers." We say **builders.** Fuck influencers. We build.
 
 ---
 
+## The goal is shipping the product
+
+Everything here serves one outcome: **a real, working CrowdShip in front of real
+people, as fast as possible.** That outcome is the measure of every decision — does
+it get us to a shipped, usable product sooner?
+
+Two things follow from that, and together they are the whole engineering attitude:
+
+- **Don't reinvent what already exists.** The hard foundations are solved problems.
+  Reach for the best available solution and move on. Time spent rebuilding solved
+  tech is time not spent shipping the thing only we can ship.
+- **Don't get precious.** Don't get attached to building any particular piece, and
+  don't get attached to owning it either. The product is the point; the parts under
+  it are means. Whatever gets a working CrowdShip in front of people soonest — and
+  keeps it working — is the right call.
+
+Ship first. Steer with real usage. Improve what people are actually looking at.
+
+---
+
 ## The three-sided idea
 
 1. **Builders** show up to build — for fun, for an audience, for income, to show off.
@@ -50,22 +70,25 @@ a home. This is the home.
 Coins are the unit of value. A coin is roughly a cent — a stand-in for money. The
 exact rate is a knob, not a principle.
 
-**We own the coin ledger, absolutely, and it is the one sacred thing in this
-system.** Every coin that exists came from somewhere and is accounted for. No coin
-is ever created, destroyed, or moved silently. The ledger is the single source of
-truth for value: auditable, double-entry, boring, bulletproof. If anything in this
-codebase earns paranoia, it is this. Money bugs are not "bugs" — they are the end
-of the company. Failures around money are **loud**, never swallowed.
+**The integrity of value is non-negotiable.** Every coin came from somewhere and is
+accounted for; none is ever created, destroyed, or moved silently; failures around
+money are **loud**, never swallowed. Money bugs are not "bugs" — they are the end
+of the company. This is the one place the product is never allowed to be sloppy.
+
+That integrity is a property we *get* — by moving coins in the most trustworthy,
+proven way available and shipping it. It is not something we prove by building it
+ourselves.
 
 The price a backer pays for a coin and the value a builder cashes one out for do
-not have to be the same number. **The spread is the business model.** One ledger;
-the buy and sell rates are policy.
+not have to be the same number. **The spread is the business model.** The buy and
+sell rates are a knob.
 
 ---
 
 ## The menu belongs to the builder
 
-This is the most important principle in the document and the easiest to get wrong:
+This is the most important product principle in the document and the easiest to
+get wrong:
 
 **We do not decide what builders sell. We give them the power to sell anything,
 then we get out of the way.**
@@ -78,53 +101,40 @@ overlay and payment page — **not** a form with our dropdown of allowed actions
 
 Do **not** build "a shoutout system" and "a voting system" and "a bounty system."
 That road ends in the bloat we're escaping, and worse, it ends with *us* deciding
-what's allowed. Build the smallest substrate that lets a builder define a priced
-thing and have it fire, and let the builders' creativity be the product. The
-variety comes from **them**, not from our roadmap.
+what's allowed. The substrate is a priced thing that fires an effect; the variety
+comes from **builders**, not from our roadmap.
 
-What we own: the coins, the settlement of obligations, the payouts, our cut, and
+What we handle is the money side — settlement of obligations, payouts, our cut, and
 the rules of conduct. **The rail, not the shop.**
 
 ---
 
-## Crypto and self-settling obligations
+## Self-settling obligations
 
-This is a core pillar, not a footnote. It is also the part most likely to be the
-thing people love and talk about.
+This is a core product pillar, not a footnote. It is also the part most likely to
+be the thing people love and talk about.
 
-The single most powerful structural idea here: **obligations that pay themselves
-out.** A backer's pledge sits in escrow; the instant its condition is met — the
-deliverable is accepted, the pool hits its target, the goal resolves — it releases
-to the builder, our cut is skimmed, and everyone watching can see it happen. No
-human in the loop. No platform sitting on the money asking to be trusted.
+The single most powerful idea here: **obligations that pay themselves out.** A
+backer's pledge sits in escrow; the instant its condition is met — the deliverable
+is accepted, the pool hits its target, the goal resolves — it releases to the
+builder, our cut is skimmed, and everyone watching can see it happen. No human in
+the loop. No platform sitting on the money asking to be trusted.
 
-For "I paid to get a feature built," trustless, automatic, transparent settlement
-is genuinely **better** than us acting as a manual escrow agent. And a coin people
-can actually hold and trade is its own flywheel.
+For "I paid to get a feature built," automatic, transparent settlement is genuinely
+**better** than us acting as a manual escrow agent.
 
-The tradeoffs are not optional reading:
-- A freely traded coin invites securities and money-transmitter scrutiny.
-- Volatility fights the "a coin is a cent" experience.
-- On-chain UX repels normal users.
-- Custody is a liability.
-
-The shape that usually survives contact with reality: **a stable, friendly
-internal coin for the experience, with a programmable settlement rail
-underneath** — obligations encoded as contracts, denominated stably.
-
-**The one decision that forks the architecture:** are obligations enforced
-*trustlessly* (smart contract) or *custodially* (our ledger)? Current lean: design
-the ledger so it can settle **either** way; launch **custodial** because it ships
-faster; make on-chain auto-settlement the **headline feature** the moment it's
-real — never the thing that blocks launch.
+We launch **custodial** — the obligation settles against our coin balances —
+because it ships fastest. A trustless on-chain version is a **headline feature for
+later**, never the thing that blocks launch. The tradeoffs of a freely-traded coin
+(securities/money-transmitter scrutiny, volatility vs. "a coin is a cent," on-chain
+UX, custody liability) are why on-chain waits.
 
 ---
 
-## What we own vs. what we never touch
+## What we protect vs. what we never touch
 
-**Own (defend these):**
-- The coin ledger and every coin movement.
-- Settlement of obligations and payouts (and our cut).
+**Protect (these are the money and the trust):**
+- Every coin movement, settlement of obligations, payouts, and our cut.
 - Conduct and content policy, enforced at one boundary.
 - Identity, trust, and the integrity of the stream itself.
 
@@ -156,23 +166,23 @@ want. Nothing else.
 ## Principles for whoever builds this
 
 - **The stream is the product.** Everything serves the stream.
+- **Ship the product.** The goal is a working CrowdShip in front of real people;
+  speed to that is what we optimize for.
+- **Don't reinvent, don't get precious.** Use the best existing solution for solved
+  problems; stay unattached to building or owning any particular piece.
 - **We build.** (Not "we influence.") The tone is funny and a little goofy; the
   engineering and the money are dead serious.
 - **Protect the builder's openness at all costs.** The moment you're tempted to add
   a dropdown of allowed actions, stop and reread the menu section.
-- **The ledger is sacred.** Money never moves silently, failures are loud, nothing
-  is ever swallowed.
-- **Don't pre-build the empire.** Smallest substrate that lets the real thing
-  happen. Variety comes from builders; value comes from the stream.
+- **Integrity of value is sacred.** Money never moves silently, failures are loud,
+  nothing is ever swallowed.
 
 ---
 
 ## Open decisions (not yet made)
 
 - Custodial vs. on-chain settlement for v1 (lean: custodial now, on-chain headline
-  later).
-- Whether the coin is ever externally tradable, and the regulatory posture that
-  implies.
+  later), and whether the coin is ever externally tradable.
 - The buy/sell spread and exactly how the cut is taken.
 - KYC, payout, and tax mechanics for builders cashing out.
 - **tinkerpad.ai's role** — likely the in-browser workspace the building actually
@@ -186,12 +196,16 @@ want. Nothing else.
 - Not a cam platform.
 - Not a rigid bounty board with our categories. The builder's menu is theirs.
 - Not a coin that exists to pump. The coin exists to move value through the stream.
+- Not a foundational-infrastructure project. We ship a product; we don't rebuild
+  solved tech to prove we can.
 
 ---
 
 ## Status
 
-Founding stage. No product code yet. This document is the source of truth for
+Founding stage, building toward a shipped POC. There is a walking-skeleton web app
+(`apps/web`) — the visible experience, driven by an in-memory fake behind a single
+catalog seam — and early ledger code. This document is the source of truth for
 *intent*; build toward it, and update it when intent changes — never let it drift
 from what we're actually building.
 
