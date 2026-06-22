@@ -58,6 +58,15 @@ importers:
         specifier: workspace:*
         version: link:../std
 
+  packages/identity-node:
+    dependencies:
+      '@crowdship/identity':
+        specifier: workspace:*
+        version: link:../identity
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+
   packages/ledger:
     dependencies:
       '@crowdship/ledger-kernel':
