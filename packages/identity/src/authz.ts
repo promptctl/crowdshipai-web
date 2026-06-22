@@ -2,6 +2,7 @@ import type { Account } from './account.js';
 import type { Channel } from './channel.js';
 import type { AccountId } from './ids.js';
 import type { Role, RoleSet } from './roles.js';
+import type { StaffRoster } from './staff.js';
 
 /**
  * Authorization — the *second* question the single auth gate asks, once
@@ -42,8 +43,8 @@ export const mayManageChannel = (principal: Principal, channel: Channel): boolea
 
 /**
  * Whether a principal carries platform-operator authority — the right to act AS
- * the platform (verify a channel, administer another account), as distinct from
- * the marketplace-participant capabilities in {@link Principal.roles}.
+ * the platform (verify a channel, sanction an account), as distinct from the
+ * marketplace-participant capabilities in {@link Principal.roles}.
  *
  * Platform authority is deliberately NOT a {@link Role}.
  * Folding `staff` into the participant role set would make it constructible from a
@@ -54,14 +55,17 @@ export const mayManageChannel = (principal: Principal, channel: Channel): boolea
  * escalation unrepresentable, the same way bb2.4 kept verification out of the
  * builder-owned profile.
  *
- * No mechanism designates staff yet — there is no admin surface and no staff
- * registry — so the honest current theorem is "platform authority is a question
- * nothing yet answers yes": this is TRUE for no one. It denies by default rather
- * than guessing [LAW:no-silent-failure], and it is the SINGLE seam the staff-
- * authority mechanism plugs into later (one edit, every staff-gated decision below
- * updated at once). Until then, staff-gated actions are gate-unreachable by design.
+ * Authority is the question, the {@link StaffRoster} is the answer: a principal is
+ * staff exactly when the roster designates their account. The roster is resolved
+ * from its durable, auditable source at the composition boundary and handed in as a
+ * value, so this stays a pure decision [LAW:effects-at-boundaries] and the SINGLE
+ * seam every staff-gated check below reads — designate an account once, in the
+ * roster's source, and every decision here answers yes for it at once
+ * [LAW:single-enforcer]. An absent or empty roster denies everyone, so a
+ * misconfigured deployment fails closed rather than guessing [LAW:no-silent-failure].
  */
-export const isPlatformStaff = (_principal: Principal): boolean => false;
+export const isPlatformStaff = (principal: Principal, roster: StaffRoster): boolean =>
+  roster.includes(principal.id);
 
 /**
  * May this principal set a channel's verification status? A PLATFORM action —
@@ -71,4 +75,18 @@ export const isPlatformStaff = (_principal: Principal): boolean => false;
  * [LAW:decomposition]. So this asks only about platform authority and nothing
  * about who owns the channel — which is why it takes no {@link Channel} at all.
  */
-export const maySetVerification = (principal: Principal): boolean => isPlatformStaff(principal);
+export const maySetVerification = (principal: Principal, roster: StaffRoster): boolean =>
+  isPlatformStaff(principal, roster);
+
+/**
+ * May this principal impose or lift a `Sanction` against an account — a ban or
+ * suspension? PLATFORM authority only, NEVER ownership: a builder must not be
+ * able to unban themselves, so this asks solely whether the principal acts AS the
+ * platform and takes no account-being-sanctioned at all [LAW:decomposition]. The
+ * teeth (recording the sanction) live in the conduct path; this is the one gate on
+ * WHO may pull them, reading the same roster as every other staff decision so
+ * authority cannot drift between verifying a channel and sanctioning an account
+ * [LAW:single-enforcer].
+ */
+export const maySanction = (principal: Principal, roster: StaffRoster): boolean =>
+  isPlatformStaff(principal, roster);
