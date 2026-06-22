@@ -16,6 +16,7 @@
     "@crowdship/ledger-kernel": "workspace:*",
     "@crowdship/menu": "workspace:*",
     "@crowdship/moderation": "workspace:*",
+    "@crowdship/moderation-node": "workspace:*",
     "@crowdship/on-ramp": "workspace:*",
     "@crowdship/payments": "workspace:*",
     "@crowdship/purchase": "workspace:*",

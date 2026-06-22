@@ -41,6 +41,9 @@ importers:
       '@crowdship/moderation':
         specifier: workspace:*
         version: link:../../packages/moderation
+      '@crowdship/moderation-node':
+        specifier: workspace:*
+        version: link:../../packages/moderation-node
       '@crowdship/on-ramp':
         specifier: workspace:*
         version: link:../../services/on-ramp
@@ -132,6 +135,15 @@ importers:
 
   packages/moderation:
     dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+
+  packages/moderation-node:
+    dependencies:
+      '@crowdship/moderation':
+        specifier: workspace:*
+        version: link:../moderation
       '@crowdship/std':
         specifier: workspace:*
         version: link:../std
