@@ -11,10 +11,11 @@ type DatabaseSync = import('node:sqlite').DatabaseSync;
 /**
  * Opens the identity database and brings its schema into existence — the single
  * place the durable identity tables are defined [LAW:one-source-of-truth]. The
- * SQLite stores ({@link SqliteAuthStore}, {@link SqliteCredentialStore}) share
- * one handle returned here, so all identity state lives in one file and one
- * connection; the founder's "SQLite now, Postgres as performance requires" path
- * is a swap of this opener and the stores behind their ports, nothing above.
+ * SQLite stores ({@link SqliteAuthStore}, {@link SqliteCredentialStore},
+ * {@link SqliteChannelStore}) share one handle returned here, so all identity
+ * state lives in one file and one connection; the founder's "SQLite now, Postgres
+ * as performance requires" path is a swap of this opener and the stores behind
+ * their ports, nothing above.
  *
  * `location` is a filesystem path, or `':memory:'` for an ephemeral database
  * (the fast, isolated store the durable-parity tests run against).
@@ -59,6 +60,14 @@ export const openIdentityDb = (location: string): DatabaseSync => {
       token_hash TEXT    PRIMARY KEY,
       account_id TEXT    NOT NULL,
       expires_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS channels (
+      id           TEXT    PRIMARY KEY,
+      owner_id     TEXT    NOT NULL UNIQUE,
+      handle       TEXT    NOT NULL UNIQUE,
+      display_name TEXT    NOT NULL,
+      bio          TEXT    NOT NULL DEFAULT '',
+      created_at   INTEGER NOT NULL
     );
   `);
   migrateAddRolesColumn(db);

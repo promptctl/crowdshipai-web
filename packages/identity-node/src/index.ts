@@ -15,3 +15,4 @@ export type { ScryptParams } from './scrypt-credentials.js';
 export { openIdentityDb } from './identity-db.js';
 export { SqliteAuthStore } from './sqlite-auth-store.js';
 export { SqliteCredentialStore } from './sqlite-credentials.js';
+export { SqliteChannelStore } from './sqlite-channel-store.js';

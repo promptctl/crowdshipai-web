@@ -9,6 +9,21 @@ export type { Account } from './account.js';
 export type { Session, Authenticated } from './session.js';
 export { isExpired } from './session.js';
 
+export type { Channel, ChannelProfile, Handle, HandleError, DisplayName, DisplayNameError, Bio, BioError } from './channel.js';
+export { handle, displayName, bio, EMPTY_BIO } from './channel.js';
+
+export type { ChannelStore } from './channel-store.js';
+export { InMemoryChannelStore } from './channel-store.js';
+
+export type {
+  ChannelService,
+  ChannelServiceDeps,
+  ChannelClaim,
+  ChannelIdMint,
+  RoleGranter,
+} from './channel-service.js';
+export { StandardChannelService } from './channel-service.js';
+
 export type { Role, RoleSet, RoleError } from './roles.js';
 export {
   ROLES,
@@ -24,6 +39,7 @@ export {
 export type {
   AccountId,
   SessionId,
+  ChannelId,
   SessionToken,
   RecoveryToken,
   Secret,
@@ -32,9 +48,18 @@ export type {
   EmailError,
   SecretError,
 } from './ids.js';
-export { accountId, sessionId, sessionToken, recoveryToken, secret, email } from './ids.js';
+export { accountId, sessionId, channelId, sessionToken, recoveryToken, secret, email } from './ids.js';
 
-export type { SignUpError, LogInError, SessionError, ResetError, RoleChangeError } from './errors.js';
+export type {
+  SignUpError,
+  LogInError,
+  SessionError,
+  ResetError,
+  RoleChangeError,
+  ClaimError,
+  RenameError,
+  EditProfileError,
+} from './errors.js';
 
 export type {
   AuthService,

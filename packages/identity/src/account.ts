@@ -4,11 +4,13 @@ import type { RoleSet } from './roles.js';
 
 /**
  * The base identity record: who-is-who, and what they may do. Deliberately
- * minimal and readonly with room to grow [LAW:decomposition] [LAW:carrying-cost]
- * — the concerns that orbit an account arrive as *new fields, not a rewrite*:
- * `roles` is bb2.2's addition; the builder channel handle/profile (bb2.3) and
- * trust signals (bb2.4) will land the same way. bb2.1 owned only the account's
- * existence and its login identity.
+ * minimal and readonly with room to grow [LAW:decomposition] [LAW:carrying-cost].
+ * A *capability* of the account — like `roles` (bb2.2) — arrives as a new field,
+ * not a rewrite. A whole separate concern does NOT: the builder channel (bb2.3)
+ * is the account's *public* on-camera identity, a distinct record keyed by the
+ * account ({@link Channel}), not more login-identity fields fused onto this one
+ * [LAW:decomposition]. bb2.1 owned only the account's existence and its login
+ * identity.
  *
  * The credential secret is NOT here: a password hash is the adopted auth
  * library's to hold, reached through the `CredentialStore` seam, never a field

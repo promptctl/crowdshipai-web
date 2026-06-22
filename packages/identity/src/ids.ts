@@ -8,6 +8,14 @@ export type AccountId = Brand<string, 'AccountId'>;
 export type SessionId = Brand<string, 'SessionId'>;
 
 /**
+ * The stable internal identity of a builder channel. Opaque; minted, never
+ * parsed — and deliberately distinct from the channel's {@link Handle}, which is
+ * a *renameable public alias*. Menus, streams, and pledges reference a channel by
+ * this id, so a rename never cascades into them [LAW:carrying-cost].
+ */
+export type ChannelId = Brand<string, 'ChannelId'>;
+
+/**
  * The bearer secret a client presents to prove a session. The domain carries it
  * as an opaque string and NEVER inspects, parses, or derives meaning from it
  * [LAW:effects-at-boundaries] — minting and verifying live behind the
@@ -44,6 +52,8 @@ export const accountId = (raw: string): Result<AccountId, BlankError> =>
   nonBlank<'AccountId'>('accountId', raw);
 export const sessionId = (raw: string): Result<SessionId, BlankError> =>
   nonBlank<'SessionId'>('sessionId', raw);
+export const channelId = (raw: string): Result<ChannelId, BlankError> =>
+  nonBlank<'ChannelId'>('channelId', raw);
 export const sessionToken = (raw: string): Result<SessionToken, BlankError> =>
   nonBlank<'SessionToken'>('sessionToken', raw);
 export const recoveryToken = (raw: string): Result<RecoveryToken, BlankError> =>
