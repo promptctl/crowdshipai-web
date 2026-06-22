@@ -1,4 +1,4 @@
-import type { Channel, ChannelProfile, Handle } from './channel.js';
+import type { Channel, ChannelProfile, Handle, VerificationStatus } from './channel.js';
 import type { AccountId, ChannelId } from './ids.js';
 
 /**
@@ -36,6 +36,12 @@ export interface ChannelStore {
   updateHandle(id: ChannelId, handle: Handle): Promise<void>;
   /** Replace only the public profile. The service guarantees the channel exists. */
   updateProfile(id: ChannelId, profile: ChannelProfile): Promise<void>;
+  /**
+   * Set only the platform verification status — a distinct write from
+   * {@link updateProfile} because it has a distinct owner (platform, not builder)
+   * [LAW:decomposition]. The service guarantees the channel exists.
+   */
+  updateVerification(id: ChannelId, status: VerificationStatus): Promise<void>;
 }
 
 /**
@@ -90,6 +96,14 @@ export class InMemoryChannelStore implements ChannelStore {
   updateProfile(id: ChannelId, profile: ChannelProfile): Promise<void> {
     const channel = this.#channels.get(id);
     if (channel !== undefined) this.#channels.set(id, { ...channel, profile });
+    return Promise.resolve();
+  }
+
+  updateVerification(id: ChannelId, status: VerificationStatus): Promise<void> {
+    const channel = this.#channels.get(id);
+    // An absent channel changes nothing rather than being silently created
+    // [LAW:no-silent-failure]; the service guarantees existence first.
+    if (channel !== undefined) this.#channels.set(id, { ...channel, verification: status });
     return Promise.resolve();
   }
 }

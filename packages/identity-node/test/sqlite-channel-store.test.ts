@@ -1,12 +1,19 @@
-import { describe, expect, test } from 'vitest';
+import { createRequire } from 'node:module';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, test } from 'vitest';
 
 import type { Result } from '@crowdship/std';
 import { timestamp } from '@crowdship/std';
 import {
+  DEFAULT_HANDLE_POLICY,
   StandardAuthService,
   StandardChannelService,
+  UNVERIFIED,
   accountId,
   bio,
+  channelId,
   displayName,
   email,
   handle,
@@ -74,6 +81,7 @@ const build = () => {
     ids: mint,
     roles: auth,
     store: new SqliteChannelStore(db),
+    policy: DEFAULT_HANDLE_POLICY,
   });
   return { db, auth, channels };
 };
@@ -145,6 +153,32 @@ describe('SqliteChannelStore: claiming a channel persists it and grants builder 
     expect(got?.profile.bio).toBe('');
   });
 
+  test('verification defaults to none on claim and a set status persists durably', async () => {
+    const { db, auth, channels } = build();
+    const owner = await aBacker(auth, 'verify@crowdship.dev');
+    const claim = must(await channels.claimChannel(owner, must(handle('toverify')), aProfile('To Verify')));
+    // A fresh claim is unverified, and that reads back from the database.
+    expect(claim.channel.verification).toBe('none');
+    expect((await new SqliteChannelStore(db).channelById(claim.channel.id))?.verification).toBe('none');
+
+    must(await channels.setVerification(claim.channel.id, 'official'));
+    // A second store with no in-process state reads the affirmed tier from disk.
+    expect((await new SqliteChannelStore(db).channelById(claim.channel.id))?.verification).toBe('official');
+
+    must(await channels.setVerification(claim.channel.id, 'none'));
+    expect((await new SqliteChannelStore(db).channelById(claim.channel.id))?.verification).toBe('none');
+  });
+
+  test('the durable claim path also rejects a reserved handle, minting nothing', async () => {
+    const { db, auth, channels } = build();
+    const owner = await aBacker(auth, 'imposter@crowdship.dev');
+    expect(await channels.claimChannel(owner, must(handle('admin')), aProfile('Imposter'))).toEqual({
+      ok: false,
+      error: { kind: 'handle-reserved', reservation: { kind: 'reserved-word', word: 'admin' } },
+    });
+    expect(await new SqliteChannelStore(db).channelByOwner(owner)).toBeUndefined();
+  });
+
   test('the UNIQUE backstops throw loudly on a duplicate handle or owner, never overwrite', async () => {
     // The service pre-checks free handle / one-per-account, so these backstops fire
     // only if two writers raced past those checks. They must be LOUD, not silent
@@ -156,6 +190,7 @@ describe('SqliteChannelStore: claiming a channel persists it and grants builder 
       ownerId: must(accountId('owner-a')),
       handle: must(handle('taken')),
       profile: aProfile('A'),
+      verification: UNVERIFIED,
       createdAt: must(timestamp(1)),
     };
     await store.insertChannel({ id: mint.newChannelId(), ...base });
@@ -171,5 +206,58 @@ describe('SqliteChannelStore: claiming a channel persists it and grants builder 
     await expect(
       (async () => store.insertChannel({ id: mint.newChannelId(), ...base, handle: must(handle('different')) }))(),
     ).rejects.toThrow(/UNIQUE/);
+  });
+});
+
+/**
+ * `node:sqlite` is loaded through a runtime require for the same reason
+ * `identity-db.ts` does it — vite-node strips the `node:` prefix at analysis time.
+ */
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+
+describe('the verification column migrates onto a pre-bb2.4 channels table', () => {
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  test('an old database lacking the column gets it, and legacy rows read as unverified', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'crowdship-mig-'));
+    const file = join(dir, 'identity.db');
+
+    // Stand up a database with the EXACT pre-bb2.4 channels schema — no
+    // verification column — and seed one legacy channel row.
+    const legacy = new DatabaseSync(file);
+    legacy.exec(`
+      CREATE TABLE channels (
+        id           TEXT    PRIMARY KEY,
+        owner_id     TEXT    NOT NULL UNIQUE,
+        handle       TEXT    NOT NULL UNIQUE,
+        display_name TEXT    NOT NULL,
+        bio          TEXT    NOT NULL DEFAULT '',
+        created_at   INTEGER NOT NULL
+      );
+    `);
+    legacy
+      .prepare('INSERT INTO channels (id, owner_id, handle, display_name, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run('chan-legacy', 'owner-legacy', 'legacy', 'Legacy Builder', 1);
+    legacy.close();
+
+    // Reopen through the real opener: the migration runs and adds the column,
+    // never silently leaving reads to fail [LAW:no-silent-failure].
+    const db = openIdentityDb(file);
+    const reread = new SqliteChannelStore(db);
+    const got = await reread.channelById(must(channelId('chan-legacy')));
+    expect(got?.handle).toBe(must(handle('legacy')));
+    // The legacy row takes the column default — the honest "no trust signal",
+    // never a guessed badge.
+    expect(got?.verification).toBe('none');
+
+    // The migration is idempotent: opening the already-migrated file again is fine.
+    openIdentityDb(file);
+    expect((await new SqliteChannelStore(db).channelById(must(channelId('chan-legacy'))))?.verification).toBe(
+      'none',
+    );
   });
 });

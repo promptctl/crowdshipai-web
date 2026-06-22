@@ -4,10 +4,12 @@ import { describe, expect, test } from 'vitest';
 import type { Clock, Result, Timestamp } from '@crowdship/std';
 import { timestamp } from '@crowdship/std';
 import {
+  DEFAULT_HANDLE_POLICY,
   EMPTY_BIO,
   InMemoryAuthService,
   InMemoryChannelStore,
   StandardChannelService,
+  UNVERIFIED,
   accountId,
   bio,
   channelId,
@@ -33,6 +35,7 @@ import {
   type Secret,
   type SecretMint,
   type SessionId,
+  type VerificationStatus,
   type SessionToken,
 } from '../src/index.js';
 
@@ -123,6 +126,7 @@ const makeHarness = () => {
     ids: mint,
     roles: auth,
     store: new InMemoryChannelStore(),
+    policy: DEFAULT_HANDLE_POLICY,
   });
   return { auth, channels };
 };
@@ -293,6 +297,90 @@ describe('editProfile replaces the public face', () => {
   });
 });
 
+describe('the impersonation policy gates claim and rename at the one handle seam', () => {
+  test('claiming a reserved authority handle is a named failure, and nothing is minted or granted', async () => {
+    const { auth, channels } = makeHarness();
+    const owner = await aBacker(auth, 'b@ex.com');
+    const r = await channels.claimChannel(owner, aHandle('admin'), aProfile('Imposter'));
+    expect(r).toEqual({
+      ok: false,
+      error: { kind: 'handle-reserved', reservation: { kind: 'reserved-word', word: 'admin' } },
+    });
+    // The reserved check precedes the role grant, so a rejected claim leaves no residue.
+    const grant = must(await auth.logIn(must(email('b@ex.com')), must(secret('pw'))));
+    expect(hasRole(grant.account.roles, 'builder')).toBe(false);
+    expect(await channels.channelByOwner(owner)).toBeUndefined();
+  });
+
+  test('claiming a brand-impersonation handle is a named failure', async () => {
+    const { auth, channels } = makeHarness();
+    const owner = await aBacker(auth, 'b@ex.com');
+    expect(await channels.claimChannel(owner, aHandle('crowdship_official'), aProfile('Fake'))).toEqual({
+      ok: false,
+      error: { kind: 'handle-reserved', reservation: { kind: 'brand-impersonation', brand: 'crowdship' } },
+    });
+  });
+
+  test('a reserved handle cannot be slipped in through a later rename', async () => {
+    const { auth, channels } = makeHarness();
+    const owner = await aBacker(auth, 'b@ex.com');
+    const claim = must(await channels.claimChannel(owner, aHandle('honest'), aProfile('Honest')));
+    expect(await channels.rename(claim.channel.id, aHandle('support'))).toEqual({
+      ok: false,
+      error: { kind: 'handle-reserved', reservation: { kind: 'reserved-word', word: 'support' } },
+    });
+    // The original handle is untouched by the rejected rename.
+    expect((await channels.channelById(claim.channel.id))?.handle).toBe(aHandle('honest'));
+  });
+});
+
+describe('platform verification is a sibling to the builder-owned profile', () => {
+  test('a freshly claimed channel carries no trust signal', async () => {
+    const { auth, channels } = makeHarness();
+    const owner = await aBacker(auth, 'b@ex.com');
+    const claim = must(await channels.claimChannel(owner, aHandle('brandon'), aProfile('Brandon')));
+    expect(claim.channel.verification).toBe(UNVERIFIED);
+    expect((await channels.channelById(claim.channel.id))?.verification).toBe('none');
+  });
+
+  test('setVerification affirms a tier and revoking is setting it back to none', async () => {
+    const { auth, channels } = makeHarness();
+    const owner = await aBacker(auth, 'b@ex.com');
+    const claim = must(await channels.claimChannel(owner, aHandle('brandon'), aProfile('Brandon')));
+
+    const verified = must(await channels.setVerification(claim.channel.id, 'verified'));
+    expect(verified.verification).toBe('verified');
+    expect((await channels.channelById(claim.channel.id))?.verification).toBe('verified');
+
+    const promoted = must(await channels.setVerification(claim.channel.id, 'official'));
+    expect(promoted.verification).toBe('official');
+
+    // Revoking is just setting the status back to 'none' — one method, the status
+    // is the value [LAW:dataflow-not-control-flow].
+    const revoked = must(await channels.setVerification(claim.channel.id, 'none'));
+    expect(revoked.verification).toBe('none');
+    expect((await channels.channelById(claim.channel.id))?.verification).toBe('none');
+  });
+
+  test('verification is untouched by a profile edit (different owner, different write)', async () => {
+    const { auth, channels } = makeHarness();
+    const owner = await aBacker(auth, 'b@ex.com');
+    const claim = must(await channels.claimChannel(owner, aHandle('brandon'), aProfile('Brandon')));
+    must(await channels.setVerification(claim.channel.id, 'official'));
+
+    must(await channels.editProfile(claim.channel.id, aProfile('Brandon F.', 'new blurb')));
+    expect((await channels.channelById(claim.channel.id))?.verification).toBe('official');
+  });
+
+  test('setting verification on a channel that does not exist is a named failure', async () => {
+    const { channels } = makeHarness();
+    expect(await channels.setVerification(must(channelId('nope')), 'verified')).toEqual({
+      ok: false,
+      error: { kind: 'no-such-channel' },
+    });
+  });
+});
+
 /**
  * A channel store whose first {@link insertChannel} throws, then behaves normally
  * — standing in for the durable store's loud UNIQUE backstop (or any IO error)
@@ -324,6 +412,9 @@ class FailFirstInsertStore implements ChannelStore {
   updateProfile(id: ChannelId, profile: ChannelProfile): Promise<void> {
     return this.#inner.updateProfile(id, profile);
   }
+  updateVerification(id: ChannelId, status: VerificationStatus): Promise<void> {
+    return this.#inner.updateVerification(id, status);
+  }
 }
 
 describe('a claim whose channel insert fails leaves only a benign, self-healing residue', () => {
@@ -339,7 +430,13 @@ describe('a claim whose channel insert fails leaves only a benign, self-healing 
       sessionTtlMillis: 60_000,
       recoveryTtlMillis: 30_000,
     });
-    const channels = new StandardChannelService({ clock, ids: mint, roles: auth, store: new FailFirstInsertStore() });
+    const channels = new StandardChannelService({
+      clock,
+      ids: mint,
+      roles: auth,
+      store: new FailFirstInsertStore(),
+      policy: DEFAULT_HANDLE_POLICY,
+    });
     const owner = await aBacker(auth, 'b@ex.com');
 
     // The insert throws; the claim propagates it (store IO failure is exceptional,

@@ -1,8 +1,16 @@
 import type { Clock, Result } from '@crowdship/std';
 import { err, ok } from '@crowdship/std';
 import type { Account } from './account.js';
-import type { Channel, ChannelProfile, Handle } from './channel.js';
-import type { ClaimError, EditProfileError, RenameError, RoleChangeError } from './errors.js';
+import { UNVERIFIED } from './channel.js';
+import type { Channel, ChannelProfile, Handle, VerificationStatus } from './channel.js';
+import type {
+  ClaimError,
+  EditProfileError,
+  RenameError,
+  RoleChangeError,
+  VerificationError,
+} from './errors.js';
+import type { HandlePolicy } from './handle-policy.js';
 import type { AccountId, ChannelId } from './ids.js';
 import type { Role } from './roles.js';
 import type { ChannelStore } from './channel-store.js';
@@ -76,6 +84,20 @@ export interface ChannelService {
 
   /** Replace the public profile (display name, bio, and whatever it grows to hold). */
   editProfile(id: ChannelId, profile: ChannelProfile): Promise<Result<Channel, EditProfileError>>;
+
+  /**
+   * Set the platform verification status — `'verified'`, `'official'`, or `'none'`
+   * to revoke. ONE method, the status is the value: revoking is setting `'none'`,
+   * not a separate operation [LAW:dataflow-not-control-flow]. This is a *platform*
+   * action, not builder self-service — distinct from `editProfile` precisely
+   * because a builder must not be able to affirm themselves [LAW:decomposition].
+   * Like every method here it omits authorization: the single auth gate (bb2.5)
+   * authorizes that only staff may call it before the request reaches this port.
+   */
+  setVerification(
+    id: ChannelId,
+    status: VerificationStatus,
+  ): Promise<Result<Channel, VerificationError>>;
 }
 
 /** The injected world the channel service runs against — every effect and store it needs, declared. */
@@ -86,6 +108,11 @@ export interface ChannelServiceDeps {
   readonly roles: RoleGranter;
   /** Where channels live — the one swappable storage axis [LAW:locality-or-seam]. */
   readonly store: ChannelStore;
+  /**
+   * The reserved-handle / anti-impersonation policy consulted on every claim and
+   * rename — a swappable value, not baked into the rules [LAW:locality-or-seam].
+   */
+  readonly policy: HandlePolicy;
 }
 
 /**
@@ -108,10 +135,16 @@ export class StandardChannelService implements ChannelService {
     profile: ChannelProfile,
   ): Promise<Result<ChannelClaim, ClaimError>> {
     // Cheap precondition checks first, before the role grant that would otherwise
-    // leave a granted capability with no channel behind it.
+    // leave a granted capability with no channel behind it. Ordered most-permanent
+    // reason first: can this account claim at all (one channel per account), is
+    // this handle categorically forbidden (impersonation policy), is it free right
+    // now. The reserved check is the single home of the impersonation rule — every
+    // new handle reaches it through here or `rename`, nowhere else [LAW:single-enforcer].
     if ((await this.#deps.store.channelByOwner(ownerId)) !== undefined) {
       return err({ kind: 'already-has-channel' });
     }
+    const reservation = this.#deps.policy.reservationOf(handle);
+    if (reservation !== undefined) return err({ kind: 'handle-reserved', reservation });
     if ((await this.#deps.store.channelByHandle(handle)) !== undefined) {
       return err({ kind: 'handle-taken' });
     }
@@ -137,6 +170,9 @@ export class StandardChannelService implements ChannelService {
       ownerId,
       handle,
       profile,
+      // A fresh channel carries no trust signal until the platform affirms one —
+      // an explicit value, not an absent field [LAW:dataflow-not-control-flow].
+      verification: UNVERIFIED,
       createdAt: this.#deps.clock.now(),
     };
     await this.#deps.store.insertChannel(channel);
@@ -158,6 +194,11 @@ export class StandardChannelService implements ChannelService {
   async rename(id: ChannelId, handle: Handle): Promise<Result<Channel, RenameError>> {
     const existing = await this.#deps.store.channelById(id);
     if (existing === undefined) return err({ kind: 'no-such-channel' });
+    // The impersonation policy gates a rename exactly as it gates a claim — the
+    // same single seam, so a handle reserved at claim time cannot be slipped in
+    // through a later rename [LAW:single-enforcer].
+    const reservation = this.#deps.policy.reservationOf(handle);
+    if (reservation !== undefined) return err({ kind: 'handle-reserved', reservation });
     const holder = await this.#deps.store.channelByHandle(handle);
     // Renaming to the handle this channel already holds is an idempotent no-op
     // success; renaming to one another channel holds is taken.
@@ -174,5 +215,15 @@ export class StandardChannelService implements ChannelService {
     if (existing === undefined) return err({ kind: 'no-such-channel' });
     await this.#deps.store.updateProfile(id, profile);
     return ok({ ...existing, profile });
+  }
+
+  async setVerification(
+    id: ChannelId,
+    status: VerificationStatus,
+  ): Promise<Result<Channel, VerificationError>> {
+    const existing = await this.#deps.store.channelById(id);
+    if (existing === undefined) return err({ kind: 'no-such-channel' });
+    await this.#deps.store.updateVerification(id, status);
+    return ok({ ...existing, verification: status });
   }
 }

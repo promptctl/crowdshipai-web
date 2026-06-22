@@ -9,8 +9,35 @@ export type { Account } from './account.js';
 export type { Session, Authenticated } from './session.js';
 export { isExpired } from './session.js';
 
-export type { Channel, ChannelProfile, Handle, HandleError, DisplayName, DisplayNameError, Bio, BioError } from './channel.js';
-export { handle, displayName, bio, EMPTY_BIO } from './channel.js';
+export type {
+  Channel,
+  ChannelProfile,
+  Handle,
+  HandleError,
+  DisplayName,
+  DisplayNameError,
+  Bio,
+  BioError,
+  VerificationStatus,
+  VerificationStatusError,
+} from './channel.js';
+export {
+  handle,
+  displayName,
+  bio,
+  EMPTY_BIO,
+  verificationStatus,
+  VERIFICATION_STATUSES,
+  UNVERIFIED,
+} from './channel.js';
+
+export type { HandlePolicy, HandleReservation, HandlePolicyConfig } from './handle-policy.js';
+export {
+  StandardHandlePolicy,
+  DEFAULT_HANDLE_POLICY,
+  DEFAULT_RESERVED_WORDS,
+  DEFAULT_BRAND_TERMS,
+} from './handle-policy.js';
 
 export type { ChannelStore } from './channel-store.js';
 export { InMemoryChannelStore } from './channel-store.js';
@@ -59,6 +86,7 @@ export type {
   ClaimError,
   RenameError,
   EditProfileError,
+  VerificationError,
 } from './errors.js';
 
 export type {

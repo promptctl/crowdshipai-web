@@ -3,6 +3,7 @@
  * caller must destructure [LAW:no-silent-failure]; the security-shaped choices
  * are encoded here, in the type, not left to a careful implementer.
  */
+import type { HandleReservation } from './handle-policy.js';
 
 /** Signup fails only because the mailbox is already an identity. */
 export type SignUpError = { readonly kind: 'email-taken' };
@@ -33,22 +34,34 @@ export type ResetError = { readonly kind: 'invalid-or-expired' };
 export type RoleChangeError = { readonly kind: 'no-such-account' };
 
 /**
- * Claiming a builder channel fails as exactly one of three named values: the
- * desired handle is already someone's, the claiming account already holds a
- * channel (one channel per account, for now), or the account does not exist. The
- * handle value itself cannot be malformed here — `Handle` is constructed at the
- * edge, so by the time a claim is attempted that trust boundary is already crossed
- * [LAW:single-enforcer].
+ * Claiming a builder channel fails as exactly one of these named values: the
+ * desired handle is reserved against public claiming (impersonation policy), it is
+ * already someone's, the claiming account already holds a channel (one channel per
+ * account, for now), or the account does not exist. The handle value itself cannot
+ * be malformed here — `Handle` is constructed at the edge, so by the time a claim
+ * is attempted that *shape* trust boundary is already crossed [LAW:single-enforcer];
+ * `handle-reserved` is the distinct *policy* boundary, carrying the reason so the
+ * edge can tell the builder which authority/brand term it collided with.
  */
 export type ClaimError =
+  | { readonly kind: 'handle-reserved'; readonly reservation: HandleReservation }
   | { readonly kind: 'handle-taken' }
   | { readonly kind: 'already-has-channel' }
   | { readonly kind: 'no-such-account' };
 
-/** Renaming a channel fails because the target handle is taken, or the channel does not exist. */
+/** Renaming a channel fails because the target handle is reserved or taken, or the channel does not exist. */
 export type RenameError =
+  | { readonly kind: 'handle-reserved'; readonly reservation: HandleReservation }
   | { readonly kind: 'handle-taken' }
   | { readonly kind: 'no-such-channel' };
 
 /** Editing a channel's profile fails only because the channel does not exist. */
 export type EditProfileError = { readonly kind: 'no-such-channel' };
+
+/**
+ * Setting a channel's verification status fails only because the channel does not
+ * exist — the status value itself cannot be wrong, since `VerificationStatus` is a
+ * closed type the caller could not have constructed an illegal member of
+ * [LAW:types-are-the-program]. The same shape as {@link RoleChangeError}.
+ */
+export type VerificationError = { readonly kind: 'no-such-channel' };
