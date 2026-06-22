@@ -4,8 +4,10 @@ import Credentials from 'next-auth/providers/credentials';
 // without pulling a runtime dependency [LAW:effects-at-boundaries].
 import type {} from 'next-auth/jwt';
 
-import { sessionToken } from '@crowdship/identity';
+import { accountId, roleSet, sessionToken } from '@crowdship/identity';
+import type { AccountId, Role, RoleSet } from '@crowdship/identity';
 import { authorizeCredentials } from './auth-edge';
+import { resolveRequest } from './auth-gate';
 import { enforceAuthRateLimit } from './auth-rate-limit';
 import { getAuthService } from './identity';
 
@@ -16,17 +18,18 @@ import { getAuthService } from './identity';
  * the JWT cookie [LAW:one-source-of-truth]. The domain session the AuthService
  * opens is a server-side lifecycle record carried in the JWT (ended on logout).
  *
- * KNOWN LIMITATION, by design, deferred to the single auth gate (bb2.5): the JWT
- * is self-contained and trusted by its signature alone — no request re-resolves
- * the domain session. So a credential reset, which invalidates the *domain*
- * session, does NOT revoke an already-issued JWT; that JWT stays valid until its
- * `maxAge` below. The `maxAge` is deliberately short to bound that window. Real
- * revocation arrives when bb2.5 wires `resolveSession` into the request gate — do
- * NOT claim reset revokes live sessions until then [LAW:no-silent-failure].
+ * REVOCATION (bb2.5): the JWT is no longer trusted by its signature alone. The
+ * `jwt` callback below re-resolves the DOMAIN session this token names on every
+ * request through the single auth gate ({@link resolveRequest}); a session that
+ * has been logged out, credential-reset, or expired makes the callback return
+ * `null`, which invalidates the cookie. So a credential reset (which deletes the
+ * account's domain sessions) and a logout are now authoritative server-side, not
+ * merely a dropped cookie [LAW:single-enforcer][LAW:no-silent-failure].
  */
 
-// The session cookie's lifetime — kept short on purpose: it is the upper bound on
-// how long a JWT issued before a password reset can outlive that reset (see above).
+// The session cookie's lifetime. With per-request re-resolution above, this is a
+// backstop — the longest a cookie can live if it is never presented again — not
+// the primary revocation control, which is the domain session's own lifecycle.
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12; // 12 hours
 
 // In production the host must not be inferred from an attacker-controllable header,
@@ -36,7 +39,8 @@ if (process.env.NODE_ENV === 'production' && (process.env.AUTH_SECRET?.length ??
 }
 declare module 'next-auth' {
   interface Session {
-    readonly user: { readonly id: string } & DefaultSession['user'];
+    /** The request's resolved principal as branded domain values — the authz subject (`@crowdship/identity` `Principal`). */
+    readonly user: { readonly id: AccountId; readonly roles: RoleSet } & DefaultSession['user'];
   }
   interface User {
     /** The domain session token minted by `AuthService.logIn`, threaded so logout can end the server-side session. */
@@ -46,6 +50,8 @@ declare module 'next-auth' {
 declare module 'next-auth/jwt' {
   interface JWT {
     sessionToken?: string;
+    /** The principal's capabilities, carried so the session can surface them to authorization. */
+    roles?: readonly Role[];
   }
 }
 
@@ -73,13 +79,38 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
-    jwt: ({ token, user }) => {
+    jwt: async ({ token, user }) => {
+      // Carry the domain bearer token into the JWT at sign-in, so every later
+      // request can re-resolve the session it names.
       if (user?.sessionToken !== undefined) token.sessionToken = user.sessionToken;
+
+      // THE authentication boundary: re-resolve the domain session this JWT names on
+      // EVERY request. An absent principal — logged out, reset, expired, or a JWT
+      // carrying no/garbled token — returns null, which invalidates the cookie: real
+      // server-side revocation, not a JWT trusted by its signature until maxAge
+      // [LAW:single-enforcer][LAW:no-silent-failure].
+      const principal = await resolveRequest(getAuthService(), token.sessionToken);
+      if (principal === null) return null;
+
+      // Stamp the resolved principal, refreshed each call so a role grant or
+      // revocation reflects immediately — the request now CARRIES the principal and
+      // authz reads it with no further IO [LAW:effects-at-boundaries][LAW:one-source-of-truth].
+      token.sub = principal.account.id;
+      token.roles = principal.account.roles;
       return token;
     },
     session: ({ session, token }) => {
-      if (token.sub !== undefined) session.user.id = token.sub;
-      return session;
+      // Rehydrate the carried principal as validated domain values — the trust
+      // boundary turning the JWT's JSON back into branded identity types
+      // [LAW:single-enforcer]. The jwt boundary only ever returns an authenticated
+      // token here (a dead one became null), and stamped these from already-valid
+      // domain values over a signed, encrypted token, so a missing subject or a
+      // parse miss is corruption surfaced loudly, never folded into a half-formed
+      // session [LAW:no-silent-failure].
+      if (token.sub === undefined) throw new Error('auth: authenticated session JWT is missing its subject');
+      const id = accountId(token.sub);
+      if (!id.ok) throw new Error(`auth: JWT carries an invalid account id: ${token.sub}`);
+      return { ...session, user: { ...session.user, id: id.value, roles: roleSet(token.roles ?? []) } };
     },
   },
   events: {
