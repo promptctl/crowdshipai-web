@@ -1,22 +1,27 @@
 import type { Clock } from '@crowdship/std';
 import {
   effectiveSanction,
-  InMemorySanctionStore,
   type AccountId,
   type Sanction,
   type SanctionStore,
 } from '@crowdship/identity';
+import { SqliteSanctionStore } from '@crowdship/identity-node';
 import { IN_GOOD_STANDING, type ActorStanding } from '@crowdship/moderation';
+
+import { getIdentityDb } from './identity';
 
 /**
  * The single place the web app holds its sanction store [LAW:single-enforcer] — the
  * enforcement twin of `getPolicyBoundary()`. Conduct enforcement is recorded here and
  * read here; no surface keeps its own copy of who is banned, because a duplicated bar
- * is one that drifts. The in-memory store is the walking-skeleton stand-in; a durable
- * store swaps in behind the same `SanctionStore` seam without touching this module's
- * callers [LAW:locality-or-seam].
+ * is one that drifts. It runs over the SAME identity DB handle (`getIdentityDb()`) the
+ * auth and channel services use, so a sanction issued through `/admin` survives a
+ * process restart and is read back from the one durable store [LAW:one-source-of-truth].
+ * The store is a thin wrapper over that shared, HMR-cached handle, so it needs no cache
+ * of its own; swapping it stays behind the same `SanctionStore` seam, untouched by this
+ * module's callers [LAW:locality-or-seam].
  */
-const sanctionStore: SanctionStore = new InMemorySanctionStore();
+const sanctionStore: SanctionStore = new SqliteSanctionStore(getIdentityDb());
 
 export const getSanctions = (): SanctionStore => sanctionStore;
 
