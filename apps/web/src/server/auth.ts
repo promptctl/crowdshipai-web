@@ -4,9 +4,9 @@ import Credentials from 'next-auth/providers/credentials';
 // without pulling a runtime dependency [LAW:effects-at-boundaries].
 import type {} from 'next-auth/jwt';
 
-import { email, secret, sessionToken } from '@crowdship/identity';
+import { sessionToken } from '@crowdship/identity';
+import { authorizeCredentials } from './auth-edge';
 import { enforceAuthRateLimit } from './auth-rate-limit';
-import { clientIp } from './client-ip';
 import { getAuthService } from './identity';
 
 /**
@@ -59,29 +59,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Credentials({
       credentials: { email: {}, password: {} },
-      authorize: async (raw, request) => {
-        // THE edge: raw form strings become validated domain values here, and
-        // only validated values cross into the AuthService port — the web tier's
-        // single enforcer of the identity trust boundary [LAW:single-enforcer].
-        const e = email(typeof raw?.email === 'string' ? raw.email : '');
-        const s = secret(typeof raw?.password === 'string' ? raw.password : '');
-        if (!e.ok || !s.ok) return null;
-        // Throttle BEFORE the ~134MB scrypt inside logIn: an unauthenticated flood
-        // is denied here without ever entering the threadpool [LAW:no-ambient-temporal-coupling].
-        // A denial returns the same opaque null as a bad credential — login stays
-        // silent about why it failed, preserving anti-enumeration.
-        const gate = enforceAuthRateLimit({ ip: clientIp(request.headers), email: e.value });
-        if (!gate.allowed) return null;
-        const result = await getAuthService().logIn(e.value, s.value);
-        // One failure → null → NextAuth's single CredentialsSignin error. Nothing
-        // distinguishes "no such account" from "wrong secret" [LAW:types-are-the-program].
-        if (!result.ok) return null;
-        return {
-          id: result.value.account.id,
-          email: result.value.account.email,
-          sessionToken: result.value.token,
-        };
-      },
+      // THE login edge, delegated to the framework-free core: parse → throttle
+      // (before scrypt) → verify, every failure collapsing to the same opaque null
+      // [LAW:single-enforcer]. This closure only binds the production singletons;
+      // the orchestration and its ordering guarantee live in `authorizeCredentials`,
+      // where they are testable without NextAuth's runtime [LAW:effects-at-boundaries].
+      authorize: (raw, request) =>
+        authorizeCredentials(
+          { gate: enforceAuthRateLimit, authService: getAuthService() },
+          { email: raw?.email, password: raw?.password },
+          request.headers,
+        ),
     }),
   ],
   callbacks: {
