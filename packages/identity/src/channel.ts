@@ -41,6 +41,17 @@ export interface Channel {
   readonly handle: Handle;
   /** The mutable public presentation. Grows by adding fields, never by a rewrite [LAW:carrying-cost]. */
   readonly profile: ChannelProfile;
+  /**
+   * The platform's trust signal for this channel — a *sibling to {@link profile},
+   * deliberately not a field inside it* [LAW:decomposition]. The profile is what
+   * the *builder* edits (via `editProfile`); verification is what the *platform*
+   * asserts. Folding a badge into the builder-owned profile would let a builder
+   * mark themselves verified through `editProfile` — the decomposition is the
+   * security boundary. The channel record is the single source of truth for "is
+   * this channel platform-affirmed?" [LAW:one-source-of-truth]; it is set only
+   * through the platform-only `setVerification`, never through a profile edit.
+   */
+  readonly verification: VerificationStatus;
   readonly createdAt: Timestamp;
 }
 
@@ -54,6 +65,53 @@ export interface ChannelProfile {
   readonly displayName: DisplayName;
   readonly bio: Bio;
 }
+
+/**
+ * The platform's trust signal for a channel — the anti-impersonation pairing to
+ * reserved handles: those stop someone *claiming* an authority name, this lets the
+ * platform *affirm* that a channel is who it says.
+ *
+ * One closed union of mutually-exclusive tiers, not two booleans
+ * (`isVerified`/`isOfficial`) [LAW:types-are-the-program]: booleans would make the
+ * illegal `official-but-not-verified` state representable and force every reader to
+ * defend against it. A single closed tier makes "no signal", "verified builder",
+ * and "official entity" the *only* three states, and `'none'` is an explicit
+ * value, never the absence of one [LAW:dataflow-not-control-flow] — the same
+ * discipline {@link EMPTY_BIO} follows. Adding a tier is one edit here; exhaustive
+ * switches elsewhere then fail to compile until they account for it.
+ *
+ * Deliberately *no* `affirmedAt` timestamp yet: the trust signal the ticket asks
+ * for is the tier itself; an audit timestamp is a feature not requested, and "a
+ * new field, not a rewrite" is the clean path to add it later [LAW:carrying-cost].
+ */
+export type VerificationStatus = 'none' | 'verified' | 'official';
+
+/**
+ * Every verification tier, in ascending order of trust — the single source of
+ * truth for "what tiers exist" [LAW:one-source-of-truth], mirroring {@link ROLES}.
+ * The constructor below admits only a member of this set.
+ */
+export const VERIFICATION_STATUSES: readonly VerificationStatus[] = ['none', 'verified', 'official'];
+
+export type VerificationStatusError = { readonly kind: 'unknown-status'; readonly value: string };
+
+/**
+ * The trust boundary for a verification status arriving as a raw string (a durable
+ * row, an API field). It admits only a member of {@link VERIFICATION_STATUSES};
+ * anything else is a named failure the caller must handle, never a silently
+ * coerced value [LAW:no-silent-failure] — the same shape `role()` uses.
+ */
+export const verificationStatus = (raw: string): Result<VerificationStatus, VerificationStatusError> =>
+  (VERIFICATION_STATUSES as readonly string[]).includes(raw)
+    ? ok(raw as VerificationStatus)
+    : err({ kind: 'unknown-status', value: raw });
+
+/**
+ * A fresh channel's trust signal — none. Named like {@link EMPTY_BIO} and
+ * {@link NO_ROLES} so "an unverified channel" has one home, never a bare `'none'`
+ * literal scattered at the claim site [LAW:single-enforcer].
+ */
+export const UNVERIFIED: VerificationStatus = 'none';
 
 /**
  * The public, unique handle a channel is reached by — the URL slug

@@ -5,19 +5,22 @@ import {
   channelId,
   displayName,
   handle,
+  verificationStatus,
   type AccountId,
   type Channel,
   type ChannelId,
   type ChannelProfile,
   type ChannelStore,
   type Handle,
+  type VerificationStatus,
 } from '@crowdship/identity';
 import { timestamp } from '@crowdship/std';
 import { orThrow, reqInt, reqStr } from './internal.js';
 
 type Row = Record<string, unknown>;
 
-const SELECT = 'SELECT id, owner_id, handle, display_name, bio, created_at FROM channels';
+const SELECT =
+  'SELECT id, owner_id, handle, display_name, bio, verification, created_at FROM channels';
 
 /**
  * Rebuild a {@link Channel} from its row, halting loudly if the durable record is
@@ -34,6 +37,7 @@ const toChannel = (row: Row): Channel => ({
     displayName: orThrow(displayName(reqStr(row, 'display_name')), 'channels.display_name'),
     bio: orThrow(bio(reqStr(row, 'bio')), 'channels.bio'),
   },
+  verification: orThrow(verificationStatus(reqStr(row, 'verification')), 'channels.verification'),
   createdAt: orThrow(timestamp(reqInt(row, 'created_at')), 'channels.created_at'),
 });
 
@@ -59,7 +63,7 @@ export class SqliteChannelStore implements ChannelStore {
   insertChannel(channel: Channel): Promise<void> {
     this.#db
       .prepare(
-        'INSERT INTO channels (id, owner_id, handle, display_name, bio, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO channels (id, owner_id, handle, display_name, bio, verification, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         channel.id,
@@ -67,6 +71,7 @@ export class SqliteChannelStore implements ChannelStore {
         channel.handle,
         channel.profile.displayName,
         channel.profile.bio,
+        channel.verification,
         channel.createdAt,
       );
     return Promise.resolve();
@@ -98,6 +103,13 @@ export class SqliteChannelStore implements ChannelStore {
     this.#db
       .prepare('UPDATE channels SET display_name = ?, bio = ? WHERE id = ?')
       .run(profile.displayName, profile.bio, id);
+    return Promise.resolve();
+  }
+
+  updateVerification(id: ChannelId, status: VerificationStatus): Promise<void> {
+    // Row-targeted, like the other updates: an absent channel changes nothing
+    // [LAW:no-silent-failure]. The service guarantees existence first.
+    this.#db.prepare('UPDATE channels SET verification = ? WHERE id = ?').run(status, id);
     return Promise.resolve();
   }
 }

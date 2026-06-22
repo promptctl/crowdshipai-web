@@ -67,10 +67,12 @@ export const openIdentityDb = (location: string): DatabaseSync => {
       handle       TEXT    NOT NULL UNIQUE,
       display_name TEXT    NOT NULL,
       bio          TEXT    NOT NULL DEFAULT '',
+      verification TEXT    NOT NULL DEFAULT 'none',
       created_at   INTEGER NOT NULL
     );
   `);
   migrateAddRolesColumn(db);
+  migrateAddVerificationColumn(db);
   return db;
 };
 
@@ -88,4 +90,21 @@ const migrateAddRolesColumn = (db: DatabaseSync): void => {
   const columns = db.prepare('PRAGMA table_info(accounts)').all();
   const hasRoles = columns.some((column) => (column as { name?: unknown }).name === 'roles');
   if (!hasRoles) db.exec("ALTER TABLE accounts ADD COLUMN roles TEXT NOT NULL DEFAULT ''");
+};
+
+/**
+ * Bring a pre-`verification` channels table up to schema — the same idempotent,
+ * column-list-guarded shape as {@link migrateAddRolesColumn} [LAW:no-silent-failure].
+ * A channels table created before bb2.4 lacks the column; this adds it exactly
+ * once, and existing rows take the default `'none'` — the honest "this channel
+ * carries no trust signal", never a guessed badge.
+ */
+const migrateAddVerificationColumn = (db: DatabaseSync): void => {
+  const columns = db.prepare('PRAGMA table_info(channels)').all();
+  const hasVerification = columns.some(
+    (column) => (column as { name?: unknown }).name === 'verification',
+  );
+  if (!hasVerification) {
+    db.exec("ALTER TABLE channels ADD COLUMN verification TEXT NOT NULL DEFAULT 'none'");
+  }
 };
