@@ -1,88 +1,8 @@
-import { createInMemoryLedger, type Ledger } from '@crowdship/ledger';
-import {
-  accountId,
-  coinAmount,
-  idempotencyKey,
-  transactionReason,
-  transfer,
-  type Account,
-  type AccountId,
-  type CoinAmount,
-  type IdempotencyKey,
-  type Result,
-  type TransactionReason,
-} from '@crowdship/ledger-kernel';
-import {
-  dispatchingPerformer,
-  effectKind,
-  offerId,
-  type Effect,
-  type EffectHandler,
-  type EffectKind,
-  type EffectPerformer,
-  type JsonValue,
-  type PricedOffer,
-} from '@crowdship/menu';
+import { dispatchingPerformer, effectKind, type EffectHandler, type EffectKind } from '@crowdship/menu';
 import { describe, expect, it } from 'vitest';
 
-import { createInMemoryPurchaseLog, createPurchaser, type PurchaseRequest } from '../src/index.js';
-
-/** Unwrap a successful result or fail loudly — never let a falsy value or an error
- *  slip past a truthiness check [LAW:no-silent-failure]. */
-const must = <T>(r: Result<T, unknown>): T => {
-  if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
-  return r.value;
-};
-
-const coins = (n: bigint): CoinAmount => must(coinAmount(n));
-const acc = (s: string): AccountId => must(accountId(s));
-const key = (s: string): IdempotencyKey => must(idempotencyKey(s));
-const reason = (s: string): TransactionReason => must(transactionReason(s));
-const account = (id: AccountId, kind: Account['kind']): Account => ({ id, kind });
-
-const MINT = acc('mint');
-const BACKER = acc('backer');
-const BUILDER = acc('builder');
-
-/** A funded world: mint, backer (holding `funded` coins), and builder, behind one
- *  in-memory ledger. The fixtures supply real coins so a purchase moves real value. */
-const fundedLedger = async (funded: bigint): Promise<Ledger> => {
-  const ledger = createInMemoryLedger();
-  must(await ledger.openAccount(account(MINT, 'mint')));
-  must(await ledger.openAccount(account(BACKER, 'user-wallet')));
-  must(await ledger.openAccount(account(BUILDER, 'user-wallet')));
-  must(await ledger.post({ transfers: [must(transfer(MINT, BACKER, coins(funded)))], reason: reason('mint'), idempotencyKey: key('mint-fund') }));
-  return ledger;
-};
-
-/** A priced offer carrying an effect of `kind`, failing loudly on bad fixture input. */
-const offer = (id: string, price: bigint, kind: string, params: JsonValue): PricedOffer => ({
-  id: must(offerId(id)),
-  price: coins(price),
-  effect: { kind: must(effectKind(kind)), params },
-});
-
-/** A performer whose every handler records that it ran, so a test can prove an
- *  effect fired exactly once (or never) across retries and across instances. */
-const countingPerformer = (
-  kinds: readonly string[],
-): { performer: EffectPerformer; fires: () => readonly Effect[] } => {
-  const fired: Effect[] = [];
-  const record: EffectHandler = async (e) => {
-    fired.push(e);
-    return { ok: true, value: { ack: e.kind } };
-  };
-  const handlers = new Map<EffectKind, EffectHandler>(kinds.map((k) => [must(effectKind(k)), record]));
-  return { performer: dispatchingPerformer(handlers), fires: () => fired };
-};
-
-const buyRequest = (o: PricedOffer, k: string): PurchaseRequest => ({
-  offer: o,
-  payer: BACKER,
-  payee: BUILDER,
-  idempotencyKey: key(k),
-  reason: reason(`buy:${o.id}`),
-});
+import { createInMemoryPurchaseLog, createPurchaser } from '../src/index.js';
+import { BACKER, BUILDER, buyRequest, countingPerformer, fundedLedger, must, offer } from './world.js';
 
 describe('purchase-to-fire: one path posts coins then fires the effect', () => {
   it('moves coins and fires the effect once on a fresh buy', async () => {
@@ -260,21 +180,5 @@ describe('purchase-to-fire: one path posts coins then fires the effect', () => {
     expect(fires()).toHaveLength(1); // fired once across 20 concurrent attempts
     expect(await ledger.balanceOf(BACKER)).toBe(75n); // charged once, not 20×
     expect(await ledger.balanceOf(BUILDER)).toBe(25n);
-  });
-
-  it('fires a kind the platform never anticipated with no pipeline change — just a handler entry', async () => {
-    // The anti-catalog tripwire, end to end: 'summon-a-dragon' is in no enum. It rides
-    // the very same buy path as a shoutout, proving the variety is data, not branches.
-    const ledger = await fundedLedger(9001n);
-    const { performer, fires } = countingPerformer(['summon-a-dragon']);
-    const purchaser = createPurchaser(ledger, performer, createInMemoryPurchaseLog());
-
-    const o = offer('o-dragon', 9000n, 'summon-a-dragon', { color: 'green', hp: 9000 });
-    const outcome = await purchaser.buy(buyRequest(o, 'here-be-dragons'));
-
-    expect(outcome.kind).toBe('fired');
-    expect(fires()).toHaveLength(1);
-    expect(fires()[0]?.params).toEqual({ color: 'green', hp: 9000 });
-    expect(await ledger.balanceOf(BUILDER)).toBe(9000n);
   });
 });
