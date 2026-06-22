@@ -1,6 +1,7 @@
+import type { CoinAmount } from '@crowdship/std';
+
 import type { Brand } from './brand.js';
 import type { AccountId } from './ids.js';
-import type { CoinAmount } from './money.js';
 import type { Result } from './result.js';
 import { err, ok } from './result.js';
 
