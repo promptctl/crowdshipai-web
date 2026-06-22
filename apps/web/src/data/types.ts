@@ -1,3 +1,5 @@
+import type { MaturityRating } from '@crowdship/moderation';
+
 /**
  * View-model types for the watch experience, and the single read seam the UI
  * depends on. These are *view models*, not domain truth — the authoritative
@@ -9,6 +11,14 @@
  * idea is a new field, not a rewrite [LAW:carrying-cost]. The thing that must
  * stay stable is the `CrowdCatalog` interface below; everything else is cheap to
  * reshape.
+ *
+ * The one domain type a view model carries by value is moderation's
+ * {@link MaturityRating} (o97.2): content policy is squarely the platform's side
+ * of the founding line, so the rating's vocabulary is platform-owned and shared
+ * verbatim rather than re-spelled as a looser view shape that could drift from the
+ * gate that reads it [LAW:one-source-of-truth]. It is plain data, not a service
+ * handle, so carrying it keeps the seam a value boundary, not a dependency on a
+ * concrete source.
  */
 
 /** A channel's URL handle. Plain string at the view layer — the real id is branded upstream. */
@@ -26,6 +36,15 @@ export interface StreamSummary {
   readonly isLive: boolean;
   /** A stable hue (0–360) used to render a placeholder thumbnail until real video exists. */
   readonly accentHue: number;
+  /**
+   * The builder's declared content rating — the o97.2 vocabulary the age gate
+   * (o97.3) reads at the viewer-access boundary. Always present: a stream the
+   * builder declared broadly suitable carries `GENERAL_AUDIENCE` (the named
+   * baseline), never a missing field a reader must defend against
+   * [LAW:no-defensive-null-guards]. "Never declared" is not a state the catalog
+   * surfaces — a stream worth showing has a rating.
+   */
+  readonly maturity: MaturityRating;
 }
 
 /**
