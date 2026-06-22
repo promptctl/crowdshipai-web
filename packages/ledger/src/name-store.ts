@@ -18,9 +18,14 @@
  * tests, and a movement's names are recoverable in the process that recorded them.
  */
 export interface NameStore {
-  /** Remember the verbatim string behind a fingerprint. Idempotent: recording the
-   *  same `name` under the same `fingerprint` again is a no-op, so re-opening an
-   *  account or replaying a movement is safe. */
+  /** Remember the verbatim string behind a fingerprint. Write-once: the first name
+   *  recorded under a fingerprint is authoritative, and any later record under that
+   *  same fingerprint is ignored — so re-opening an account or replaying a movement
+   *  is safe. A fingerprint is a content hash of its name, so a re-record always
+   *  carries the same name and this is plain idempotence; the only way two records
+   *  under one fingerprint could differ is corruption, and write-once keeps the
+   *  original rather than letting a later write silently redefine it. Every
+   *  implementation must honour this, so a caller cannot tell which it holds. */
   record(fingerprint: bigint, name: string): Promise<void>;
 
   /** Resolve a batch of fingerprints to the strings they were derived from, in one
@@ -39,7 +44,10 @@ export class InMemoryNameStore implements NameStore {
   readonly #names = new Map<bigint, string>();
 
   record(fingerprint: bigint, name: string): Promise<void> {
-    this.#names.set(fingerprint, name);
+    // Write-once: keep the first name recorded under a fingerprint. Reading the
+    // existing value and writing it back when present makes this branch-free and keeps
+    // the effect unconditional [LAW:dataflow-not-control-flow].
+    this.#names.set(fingerprint, this.#names.get(fingerprint) ?? name);
     return Promise.resolve();
   }
 

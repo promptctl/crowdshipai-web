@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
 import {
@@ -12,7 +16,13 @@ import {
   type Transfer,
 } from '@crowdship/ledger-kernel';
 
-import { createTigerBeetleLedger, type Ledger, type LedgerQuery } from '../src/index.js';
+import {
+  createInMemoryNameStore,
+  createSqliteNameStore,
+  createTigerBeetleLedger,
+  type Ledger,
+  type LedgerQuery,
+} from '../src/index.js';
 import { ledgerContract } from '../test/ledger-contract.js';
 import { ledgerQueryContract } from '../test/ledger-query-contract.js';
 import { startTigerBeetle, type RunningTigerBeetle } from './tigerbeetle-harness.js';
@@ -106,5 +116,73 @@ describe('two processes share one engine', () => {
     // Bob holds exactly what the winner posted (10 or 20), never both.
     const bob = await p1.balanceOf(acc('xp-bob'));
     expect(bob === 10n || bob === 20n).toBe(true);
+  });
+});
+
+// The reason this ticket exists, proven end to end against the real engine: a name one
+// process records must be resolvable by another process's audit. Two ledgers stand in
+// for two app processes; the *money* is always shared (one cluster), but the *names*
+// are only shared when the NameStore is durable and shared. With a per-process in-memory
+// store the auditing process hits a loud name gap; with one shared SQLite file it reads
+// the full, named history [LAW:behavior-not-structure].
+describe('a durable shared NameStore lets one process audit what another recorded', () => {
+  const must = <T>(r: Result<T, unknown>): T => {
+    if (!r.ok) throw new Error(`expected ok: ${JSON.stringify(r.error)}`);
+    return r.value;
+  };
+  const acc = (s: string): AccountId => must(accountId(s));
+  const key = (s: string): IdempotencyKey => must(idempotencyKey(s));
+  const reason = must(transactionReason('cross-process-audit'));
+  const leg = (from: string, to: string, amount: bigint): Transfer =>
+    must(transfer(acc(from), acc(to), must(coinAmount(amount))));
+
+  const workdir = mkdtempSync(join(tmpdir(), 'crowdship-ledger-names-'));
+  // Two separate handles on one file: the recorder writes names, the auditor reads
+  // them — each owns its own handle and closes it, the discipline the store's close()
+  // doc demands (the injected ledger never closes them).
+  const sharedNames = createSqliteNameStore(join(workdir, 'names.db'));
+  const auditorNames = createSqliteNameStore(join(workdir, 'names.db'));
+
+  // The recorder ("process 1") opens accounts and posts a movement, writing every name
+  // into the shared file. The auditor ("process 2") shares the same file but is a
+  // different ledger/client, exactly as a second process would be.
+  let recorder: Ledger & LedgerQuery;
+  let auditor: Ledger & LedgerQuery;
+  beforeAll(async () => {
+    recorder = createTigerBeetleLedger(running.config, sharedNames);
+    auditor = createTigerBeetleLedger(running.config, auditorNames);
+    must(await recorder.openAccount({ id: acc('audit-mint'), kind: 'mint' }));
+    must(await recorder.openAccount({ id: acc('audit-alice'), kind: 'user-wallet' }));
+    must(await recorder.post({ transfers: [leg('audit-mint', 'audit-alice', 90n)], reason, idempotencyKey: key('audit-1') }));
+  });
+  afterAll(async () => {
+    await recorder.close();
+    await auditor.close();
+    sharedNames.close();
+    auditorNames.close();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  test("the auditor reads the recorder's movement, fully named, from the shared file", async () => {
+    const history = await auditor.historyOf(acc('audit-alice'));
+    expect(history).toHaveLength(1);
+    const [movement] = history;
+    expect(movement?.direction).toBe('credit');
+    expect(movement?.amount).toBe(90n);
+    expect(movement?.counterparty).toBe('audit-mint'); // resolved from a name the recorder wrote
+    expect(movement?.reason).toBe('cross-process-audit'); // recovered verbatim across the seam
+    expect(movement?.resultingBalance).toBe(90n);
+  });
+
+  test('without a shared store the same audit hits a loud name gap — the bug this fixes', async () => {
+    // A fresh, empty in-memory store is the per-process default that cannot see names
+    // another process recorded. The money is intact in the engine, so this is a *name*
+    // gap surfaced loudly, never silent wrong data [LAW:no-silent-failure].
+    const isolated = createTigerBeetleLedger(running.config, createInMemoryNameStore());
+    try {
+      await expect(isolated.historyOf(acc('audit-alice'))).rejects.toThrow(/name/i);
+    } finally {
+      await isolated.close();
+    }
   });
 });
