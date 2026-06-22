@@ -10,11 +10,21 @@ no-overdraft enforcement, the clock, and id generation.
 ```
 caller ── post(transfers, reason, key) ──▶  Ledger  ──▶  LedgerStore (append-only log + registry)
                                               │
+                                              ├─ findByIdempotencyKey(key)           [reads: the recorded txn, if any]
+                                              ├─ decideIdempotency(req, prior)        [pure: fresh | replay | conflict]
                                               ├─ generates id, supplies occurredAt   [effects at the boundary]
                                               ├─ gathers account kinds + balances     [reads]
                                               ├─ decidePosting(view, txn)             [pure gate — the one enforcer]
-                                              └─ append(txn)                          [acts]
+                                              ├─ append(txn)                          [acts]
+                                              └─ resultingBalances(log, txn)          [pure: the one receipt author]
 ```
+
+The idempotency lookup is a *pure lookup* — it returns only the recorded
+transaction, never balances. Both receipts a `post` can return (the fresh post and
+the replay of a prior one) derive their balances above the seam through the single
+`resultingBalances` function, so the two can never disagree and every engine behind
+the seam implements a lookup and nothing more. (`[LAW:one-source-of-truth]`,
+`[LAW:locality-or-seam]`)
 
 There is exactly one way to move value: `Ledger.post`. There is no second
 constructor, no direct store mutation, no balance you can set. (`[LAW:single-enforcer]`)
@@ -32,10 +42,20 @@ constructor, no direct store mutation, no balance you can set. (`[LAW:single-enf
   transaction is never falsely refused.
 - **Append-only history is the truth.** Balances are *derived* by folding the
   log, never stored as a second number that could drift. (`[LAW:one-source-of-truth]`)
+- **A retry can never double-spend.** Every post is idempotent on its key: re-sending
+  the same operation under the same key returns the *original* receipt (point-in-time
+  balances and all) and appends nothing. The dedup check and the append run in the same
+  serialized section, so even concurrent retries of one key let exactly one movement
+  through. Reusing a key for a *different* operation is refused loudly as a value
+  (`idempotency-key-reused`) rather than silently absorbed. The seen-keys answer is
+  *derived from the log* — every transaction carries its key — so a durable store
+  deduplicates correctly across restarts with no second record to keep in sync.
+  (`[LAW:one-source-of-truth]`)
 - **Failures are values.** A bad post returns a `Result` whose error names the
-  single reason (`no-transfers`, `unknown-account`, `would-overdraft`); nothing
-  is thrown-and-swallowed. The one exception is a re-appended transaction id —
-  corruption of the authoritative record — which halts loudly. (`[LAW:no-silent-failure]`)
+  single reason (`no-transfers`, `unknown-account`, `would-overdraft`,
+  `idempotency-key-reused`); nothing is thrown-and-swallowed. The one exception is a
+  re-appended transaction id or idempotency key reaching the log — corruption of the
+  authoritative record — which halts loudly. (`[LAW:no-silent-failure]`)
 
 ## Effects live only here
 
@@ -57,9 +77,6 @@ const receipt = await ledger.post({ transfers: [mintToAlice], reason, idempotenc
 
 ## What lives elsewhere (on purpose)
 
-- **Idempotent dedup on the key** → ledger ticket .3. The `idempotencyKey` is
-  carried into every transaction here, but this path does not yet deduplicate;
-  every `post` appends.
 - **Continuous reconciliation / drift alarms** → ledger ticket .4. This path
   enforces per-post invariants; global monitoring (and reconciling any future
   derived balance index against the fold) is its own boundary.

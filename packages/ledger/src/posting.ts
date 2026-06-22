@@ -35,18 +35,6 @@ export type PostingRejection =
       readonly resulting: bigint;
     };
 
-/**
- * The description an approved post produces: the transaction to append and the
- * resulting balance of every account whose balance changed. It is a plan, not
- * an action — the boundary performs the append [LAW:dataflow-not-control-flow].
- * Accounts that net to zero are absent (they did not change), mirroring
- * `netEffect`'s own omission of pass-through accounts.
- */
-export interface PostingPlan {
-  readonly transaction: Transaction;
-  readonly changed: ReadonlyMap<AccountId, bigint>;
-}
-
 /** Every account named by a transfer leg, in first-seen order. */
 const accountsOf = (txn: Transaction): readonly AccountId[] => {
   const seen = new Set<AccountId>();
@@ -65,7 +53,11 @@ const accountsOf = (txn: Transaction): readonly AccountId[] => {
 /**
  * The one place no-overdraft is enforced [LAW:single-enforcer]. Pure: given the
  * current view and a (kernel-balanced) transaction, it either approves the post
- * with the resulting balances or names the single reason it is refused.
+ * or names the single reason it is refused. It decides *legality* only and
+ * reports nothing about resulting balances — that is the separate concern of
+ * {@link resultingBalances}, the single author of the post's receipt
+ * [LAW:one-source-of-truth]. Folding "is this legal" and "what did it produce"
+ * into one output is what let two derivations of a money value drift apart.
  *
  * Two rules, and only two:
  *  - Every account named by the transaction must be known, or its negativity
@@ -81,9 +73,8 @@ const accountsOf = (txn: Transaction): readonly AccountId[] => {
 export const decidePosting = (
   view: LedgerView,
   txn: Transaction,
-): Result<PostingPlan, PostingRejection> => {
+): Result<void, PostingRejection> => {
   const net = netEffect(txn);
-  const changed = new Map<AccountId, bigint>();
 
   for (const account of accountsOf(txn)) {
     const accountKind = view.kindOf(account);
@@ -97,8 +88,7 @@ export const decidePosting = (
     if (resulting < 0n && !mayGoNegative(accountKind)) {
       return err({ kind: 'would-overdraft', account, accountKind, balance, delta, resulting });
     }
-    changed.set(account, resulting);
   }
 
-  return ok({ transaction: txn, changed });
+  return ok(undefined);
 };
