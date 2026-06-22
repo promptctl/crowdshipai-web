@@ -34,16 +34,17 @@ const goal: GoalResolved = { kind: 'goal-resolved', goal: must(goalId('hit-mrr')
 
 describe('observePool pairs a pool target with the coins observed against it', () => {
   it('is met once the pooled coins reach the target, and exactly at it', () => {
-    expect(isMet(observePool(poolTarget, coins(499n)))).toBe(false);
-    expect(isMet(observePool(poolTarget, coins(500n)))).toBe(true); // exactly at target releases
-    expect(isMet(observePool(poolTarget, coins(900n)))).toBe(true);
+    expect(isMet(observePool(poolTarget, 0n))).toBe(false); // an empty pool is a real, observable below-target reading
+    expect(isMet(observePool(poolTarget, 499n))).toBe(false);
+    expect(isMet(observePool(poolTarget, 500n))).toBe(true); // exactly at target releases
+    expect(isMet(observePool(poolTarget, 900n))).toBe(true);
   });
 
   it('carries the criterion through untouched alongside the live reading', () => {
-    const obs = observePool(poolTarget, coins(700n));
+    const obs = observePool(poolTarget, 700n);
     expect(obs.kind).toBe('pool-target-reached');
     expect(obs.target).toBe(500n); // the stored criterion is preserved
-    expect(obs.pooled).toBe(700n); // the observed fact rides alongside
+    expect(obs.pooled).toBe(700n); // the observed balance rides alongside
   });
 });
 
@@ -134,4 +135,9 @@ type _IsMetTakesExactlyObservation = Assert<
 // Each observation type exposes its own reading field — guards the `extends` wiring above.
 type _DeliverableCarriesAccepted = Assert<DeliverableObservation['accepted'] extends boolean ? true : false>;
 type _GoalCarriesResolved = Assert<GoalObservation['resolved'] extends boolean ? true : false>;
-type _PoolCarriesPooled = Assert<PoolObservation['pooled'] extends CoinAmount ? true : false>;
+// The pooled reading is a ledger BALANCE — exactly `bigint`, wide enough to hold an empty
+// or below-target pool, never narrowed to the strictly-positive `CoinAmount`. Mutual
+// assignability pins it to `bigint` itself, so a future narrowing breaks compilation.
+type _PoolReadingIsRawBalance = Assert<
+  PoolObservation['pooled'] extends bigint ? (bigint extends PoolObservation['pooled'] ? true : false) : false
+>;
