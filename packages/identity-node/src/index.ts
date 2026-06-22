@@ -7,4 +7,5 @@
  */
 export { SystemClock } from './system-clock.js';
 export { CryptoIdMint, CryptoSecretMint } from './crypto-mints.js';
-export { ScryptCredentialStore } from './scrypt-credentials.js';
+export { ScryptCredentialStore, DEFAULT_SCRYPT_PARAMS } from './scrypt-credentials.js';
+export type { ScryptParams } from './scrypt-credentials.js';

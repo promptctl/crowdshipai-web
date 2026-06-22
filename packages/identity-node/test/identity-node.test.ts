@@ -12,7 +12,16 @@ import {
   type RecoveryToken,
   type Secret,
 } from '@crowdship/identity';
-import { CryptoIdMint, CryptoSecretMint, ScryptCredentialStore, SystemClock } from '../src/index.js';
+import {
+  CryptoIdMint,
+  CryptoSecretMint,
+  ScryptCredentialStore,
+  SystemClock,
+  type ScryptParams,
+} from '../src/index.js';
+
+/** Low-cost scrypt for fast tests — the security of the params is exercised separately by the default-params test. */
+const FAST: ScryptParams = { N: 2 ** 14, r: 8, p: 1 };
 
 const must = <T>(r: Result<T, unknown>): T => {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -32,7 +41,7 @@ class NoopDelivery implements RecoveryDelivery {
 
 describe('ScryptCredentialStore (real hashing)', () => {
   test('the correct secret verifies; a wrong one does not', async () => {
-    const store = new ScryptCredentialStore();
+    const store = new ScryptCredentialStore(FAST);
     const id = anAccount('acc-1');
     await store.set(id, aSecret('correct horse'));
     expect(await store.verify(id, aSecret('correct horse'))).toBe(true);
@@ -41,12 +50,12 @@ describe('ScryptCredentialStore (real hashing)', () => {
   });
 
   test('an account with no credential on file matches nothing', async () => {
-    const store = new ScryptCredentialStore();
+    const store = new ScryptCredentialStore(FAST);
     expect(await store.verify(anAccount('ghost'), aSecret('anything'))).toBe(false);
   });
 
   test('credentials are isolated per account', async () => {
-    const store = new ScryptCredentialStore();
+    const store = new ScryptCredentialStore(FAST);
     await store.set(anAccount('a'), aSecret('secret-a'));
     await store.set(anAccount('b'), aSecret('secret-b'));
     expect(await store.verify(anAccount('a'), aSecret('secret-b'))).toBe(false);
@@ -55,7 +64,7 @@ describe('ScryptCredentialStore (real hashing)', () => {
   });
 
   test('the same secret set twice still verifies (independent salts do not break it)', async () => {
-    const store = new ScryptCredentialStore();
+    const store = new ScryptCredentialStore(FAST);
     const id = anAccount('rehash');
     await store.set(id, aSecret('same'));
     await store.set(id, aSecret('same')); // re-set: new salt
@@ -63,11 +72,21 @@ describe('ScryptCredentialStore (real hashing)', () => {
   });
 
   test('clearing a credential makes it stop verifying', async () => {
-    const store = new ScryptCredentialStore();
+    const store = new ScryptCredentialStore(FAST);
     const id = anAccount('temp');
     await store.set(id, aSecret('pw'));
     await store.clear(id);
     expect(await store.verify(id, aSecret('pw'))).toBe(false);
+  });
+
+  test('the secure default params hash and verify without blowing scrypt maxmem', async () => {
+    // No FAST override: exercises DEFAULT_SCRYPT_PARAMS (N=2^17), proving the
+    // strong default is usable and maxmem is auto-sized so scrypt does not throw.
+    const store = new ScryptCredentialStore();
+    const id = anAccount('default-cost');
+    await store.set(id, aSecret('a strong default'));
+    expect(await store.verify(id, aSecret('a strong default'))).toBe(true);
+    expect(await store.verify(id, aSecret('nope'))).toBe(false);
   });
 });
 
@@ -123,7 +142,7 @@ describe('the seam composes: InMemoryAuthService on real crypto adapters', () =>
       clock: new SystemClock(),
       ids: new CryptoIdMint(),
       secrets: new CryptoSecretMint(),
-      credentials: new ScryptCredentialStore(),
+      credentials: new ScryptCredentialStore(FAST),
       delivery: new NoopDelivery(),
       sessionTtlMillis: 60_000,
       recoveryTtlMillis: 30_000,
