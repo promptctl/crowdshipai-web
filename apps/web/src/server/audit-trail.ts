@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 
 import { SystemClock } from '@crowdship/identity-node';
-import { createInMemoryAuditTrail, entryId, type AuditTrail, type EntryId } from '@crowdship/moderation';
+import { entryId, type AuditTrail, type EntryId } from '@crowdship/moderation';
+import { createSqliteAuditTrail, openModerationDb } from '@crowdship/moderation-node';
 
 /**
  * The single place the web app holds its moderation audit trail [LAW:single-enforcer] —
@@ -12,17 +16,18 @@ import { createInMemoryAuditTrail, entryId, type AuditTrail, type EntryId } from
  * a second store that could drift from it [LAW:one-source-of-truth].
  *
  * The trail OWNS each entry's id and timestamp; the caller supplies only the event. So
- * the two effectful capabilities the in-memory trail needs are injected HERE at the
- * composition boundary [LAW:effects-at-boundaries] — the real {@link SystemClock} that
- * stamps "now", and a CSPRNG-backed id minter — never reached for inside the core.
+ * the two effectful capabilities the trail needs are injected HERE at the composition
+ * boundary [LAW:effects-at-boundaries] — the real {@link SystemClock} that stamps "now",
+ * and a CSPRNG-backed id minter — never reached for inside the core.
  *
- * It is the in-memory trail: correct for one process, the dev/test stand-in behind the
- * {@link AuditTrail} seam. Unlike the policy boundary it CARRIES STATE (the append-only
- * log), so it is cached on `globalThis` exactly as the ingest broker is, or Next.js dev
- * HMR would re-evaluate this module and wipe the queue between edits. A durable
- * `AuditTrail` store (the moderation twin of `SqliteSanctionStore`) is the swap this
- * seam is shaped for; until it lands the trail is honestly per-process, not silently
- * pretending to persist [LAW:no-silent-failure].
+ * It is the durable SQLite trail, the moderation twin of the SQLite identity stores: a
+ * filed report or a recorded incident now survives a server restart, behind the
+ * unchanged {@link AuditTrail} seam that the in-memory fake stood in for. Moderation
+ * history lives in its OWN `.data/moderation.db` file and handle, separate from the
+ * identity database — a distinct domain in a distinct store, opened here once per
+ * process and cached on `globalThis` exactly as the identity handle is, so Next.js dev
+ * HMR reuses the connection instead of reopening the file on every edit
+ * [LAW:no-shared-mutable-globals].
  */
 
 /**
@@ -38,9 +43,19 @@ const newEntryId = (): EntryId => {
   return id.value;
 };
 
-const globalForTrail = globalThis as unknown as { __crowdshipAuditTrail?: AuditTrail };
-const auditTrail: AuditTrail =
-  globalForTrail.__crowdshipAuditTrail ?? createInMemoryAuditTrail({ clock: new SystemClock(), newEntryId });
-if (process.env.NODE_ENV !== 'production') globalForTrail.__crowdshipAuditTrail = auditTrail;
+const openDb = (): DatabaseSync => {
+  const dir = join(process.cwd(), '.data');
+  mkdirSync(dir, { recursive: true });
+  return openModerationDb(join(dir, 'moderation.db'));
+};
+
+// One moderation DB handle per process — the single owner of moderation storage
+// [LAW:no-shared-mutable-globals]. Cached on globalThis so Next.js dev HMR reuses the
+// handle instead of reopening the file each time, the same posture identity.ts takes.
+const globalForDb = globalThis as unknown as { __crowdshipModerationDb?: DatabaseSync };
+const moderationDb: DatabaseSync = globalForDb.__crowdshipModerationDb ?? openDb();
+if (process.env.NODE_ENV !== 'production') globalForDb.__crowdshipModerationDb = moderationDb;
+
+const auditTrail: AuditTrail = createSqliteAuditTrail(moderationDb, { clock: new SystemClock(), newEntryId });
 
 export const getAuditTrail = (): AuditTrail => auditTrail;
