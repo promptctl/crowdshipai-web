@@ -54,6 +54,7 @@ const ASSIGN: Readonly<Record<string, RepoLayerId>> = {
   '@crowdship/ledger-kernel': 'core',
   '@crowdship/menu': 'core',
   '@crowdship/rate-limit': 'core',
+  '@crowdship/settlement': 'core',
 
   '@crowdship/identity-node': 'adapter',
   '@crowdship/ledger': 'adapter',

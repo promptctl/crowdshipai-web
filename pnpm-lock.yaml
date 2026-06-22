@@ -112,6 +112,12 @@ importers:
         specifier: workspace:*
         version: link:../std
 
+  packages/settlement:
+    dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+
   packages/std: {}
 
   services/purchase:
