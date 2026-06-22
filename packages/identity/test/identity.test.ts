@@ -152,7 +152,10 @@ describe('signup + login + session resolution', () => {
     await fc.assert(
       fc.asyncProperty(
         fc.stringMatching(/^[a-z0-9]{1,10}$/),
-        fc.stringMatching(/^.{1,32}$/),
+        // The secret contract is "non-blank" (interior whitespace allowed), so the
+        // generator's output set must equal that legal-input set — not `/.{1,32}/`,
+        // which emits whitespace-only strings the `secret()` constructor rejects.
+        fc.string({ minLength: 1, maxLength: 32 }).filter((s) => s.trim().length > 0),
         async (handle, pw) => {
           const { service } = makeService();
           const e = anEmail(`${handle}@ex.com`);
