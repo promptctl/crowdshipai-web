@@ -12,7 +12,13 @@
   "dependencies": {
     "@crowdship/identity": "workspace:*",
     "@crowdship/identity-node": "workspace:*",
+    "@crowdship/ledger": "workspace:*",
+    "@crowdship/ledger-kernel": "workspace:*",
+    "@crowdship/menu": "workspace:*",
     "@crowdship/moderation": "workspace:*",
+    "@crowdship/on-ramp": "workspace:*",
+    "@crowdship/payments": "workspace:*",
+    "@crowdship/purchase": "workspace:*",
     "@crowdship/rate-limit": "workspace:*",
     "@crowdship/std": "workspace:*",
     "@crowdship/stream": "workspace:*",

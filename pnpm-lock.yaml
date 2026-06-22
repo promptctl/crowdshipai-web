@@ -29,9 +29,27 @@ importers:
       '@crowdship/identity-node':
         specifier: workspace:*
         version: link:../../packages/identity-node
+      '@crowdship/ledger':
+        specifier: workspace:*
+        version: link:../../packages/ledger
+      '@crowdship/ledger-kernel':
+        specifier: workspace:*
+        version: link:../../packages/ledger-kernel
+      '@crowdship/menu':
+        specifier: workspace:*
+        version: link:../../packages/menu
       '@crowdship/moderation':
         specifier: workspace:*
         version: link:../../packages/moderation
+      '@crowdship/on-ramp':
+        specifier: workspace:*
+        version: link:../../services/on-ramp
+      '@crowdship/payments':
+        specifier: workspace:*
+        version: link:../../packages/payments
+      '@crowdship/purchase':
+        specifier: workspace:*
+        version: link:../../services/purchase
       '@crowdship/rate-limit':
         specifier: workspace:*
         version: link:../../packages/rate-limit
