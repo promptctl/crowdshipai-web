@@ -2,6 +2,7 @@ import type { Clock, Result, Timestamp } from '@crowdship/std';
 import { err, ok, timestamp } from '@crowdship/std';
 import type { Account } from './account.js';
 import type { LogInError, ResetError, SessionError, SignUpError } from './errors.js';
+import { accountId } from './ids.js';
 import type { AccountId, Email, RecoveryToken, Secret, SessionToken } from './ids.js';
 import type {
   AuthService,
@@ -15,6 +16,18 @@ import type { Authenticated, Session } from './session.js';
 import { isExpired } from './session.js';
 import type { AuthStore } from './store.js';
 import { InMemoryAuthStore } from './store.js';
+
+/**
+ * A reserved account id used ONLY to drive a timing-equalizing credential verify
+ * when no account matches a login email. Minted ids are UUIDs, so this non-UUID
+ * sentinel can never collide with a real account — verifying against it is
+ * guaranteed to miss, which is exactly the point [LAW:types-are-the-program].
+ */
+const ABSENT_ACCOUNT: AccountId = (() => {
+  const r = accountId('absent::no-such-account::timing-equalizer');
+  if (!r.ok) throw new Error('unreachable: the absent-account sentinel is non-blank');
+  return r.value;
+})();
 
 /** The injected world the auth service runs against — every effect and store it needs, declared. */
 export interface AuthServiceDeps {
@@ -72,13 +85,14 @@ export class StandardAuthService implements AuthService {
 
   async logIn(email: Email, secret: Secret): Promise<Result<LoginGrant, LogInError>> {
     const account = await this.#deps.store.accountByEmail(email);
-    // One failure value whether the account is missing or the secret is wrong
-    // [LAW:types-are-the-program]. (A production adapter additionally equalizes
-    // timing against a dummy verify; that is the adapter's concern, not the
-    // domain's.)
-    if (account === undefined) return err({ kind: 'invalid-credentials' });
-    const verified = await this.#deps.credentials.verify(account.id, secret);
-    if (!verified) return err({ kind: 'invalid-credentials' });
+    // Always perform a credential verification, even when no account matches —
+    // verifying against a reserved id that can never exist. A missing mailbox and
+    // a wrong secret then take the same time AND yield the same single failure
+    // value, so neither the response nor its latency leaks which emails are
+    // registered [LAW:types-are-the-program]. The variability is in the value
+    // passed to verify, not in whether verify runs [LAW:dataflow-not-control-flow].
+    const verified = await this.#deps.credentials.verify(account?.id ?? ABSENT_ACCOUNT, secret);
+    if (account === undefined || !verified) return err({ kind: 'invalid-credentials' });
     return ok(await this.#openSession(account));
   }
 

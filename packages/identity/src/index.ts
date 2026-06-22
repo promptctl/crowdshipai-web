@@ -18,6 +18,7 @@ export type {
   Email,
   BlankError,
   EmailError,
+  SecretError,
 } from './ids.js';
 export { accountId, sessionId, sessionToken, recoveryToken, secret, email } from './ids.js';
 

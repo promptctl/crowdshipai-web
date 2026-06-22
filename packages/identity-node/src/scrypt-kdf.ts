@@ -80,3 +80,20 @@ export const verifyCredential = async (secret: Secret, stored: Stored): Promise<
   // throw and the compare reveals nothing through timing.
   return timingSafeEqual(candidate, stored.hash);
 };
+
+/** A fixed salt for the work {@link verifyAbsent} performs — its only job is to make scrypt run, never to protect anything. */
+const ABSENT_SALT = Buffer.alloc(SALT_BYTES, 0x00);
+
+/**
+ * Spend the full cost of a verification that is guaranteed to fail, so an account
+ * with NO credential on file takes the same wall-clock time as one with a wrong
+ * secret. Without this, "no such credential" returns instantly while a real
+ * verify burns scrypt — a timing side channel that re-enables the account
+ * enumeration the single login-failure value exists to prevent [LAW:types-are-the-program].
+ * Always resolves `false`; the comparison result is discarded, only its cost matters.
+ */
+export const verifyAbsent = async (secret: Secret, params: ScryptParams): Promise<false> => {
+  const candidate = await scryptAsync(secret, ABSENT_SALT, KEY_BYTES, { ...params, maxmem: maxmemFor(params) });
+  timingSafeEqual(candidate, candidate);
+  return false;
+};

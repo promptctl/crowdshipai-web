@@ -4,6 +4,7 @@ import { reqBytes, reqInt } from './internal.js';
 import {
   DEFAULT_SCRYPT_PARAMS,
   deriveCredential,
+  verifyAbsent,
   verifyCredential,
   type ScryptParams,
   type Stored,
@@ -43,9 +44,9 @@ export class SqliteCredentialStore implements CredentialStore {
     const row = this.#db
       .prepare('SELECT salt, hash, n, r, p FROM credentials WHERE account_id = ?')
       .get(id);
-    // No credential on file is a real answer — nothing matches — not a skipped op
-    // [LAW:no-defensive-null-guards].
-    if (row === undefined) return Promise.resolve(false);
+    // No credential on file still pays a full scrypt (verifyAbsent) so it cannot be
+    // told from a wrong secret by timing — nothing matches [LAW:no-defensive-null-guards].
+    if (row === undefined) return verifyAbsent(secret, this.#params);
     const stored: Stored = {
       salt: reqBytes(row, 'salt'),
       hash: reqBytes(row, 'hash'),

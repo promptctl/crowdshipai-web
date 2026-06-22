@@ -1,5 +1,12 @@
 import type { AccountId, CredentialStore, Secret } from '@crowdship/identity';
-import { DEFAULT_SCRYPT_PARAMS, deriveCredential, verifyCredential, type ScryptParams, type Stored } from './scrypt-kdf.js';
+import {
+  DEFAULT_SCRYPT_PARAMS,
+  deriveCredential,
+  verifyAbsent,
+  verifyCredential,
+  type ScryptParams,
+  type Stored,
+} from './scrypt-kdf.js';
 
 export { DEFAULT_SCRYPT_PARAMS } from './scrypt-kdf.js';
 export type { ScryptParams } from './scrypt-kdf.js';
@@ -27,9 +34,10 @@ export class ScryptCredentialStore implements CredentialStore {
 
   async verify(id: AccountId, secret: Secret): Promise<boolean> {
     const stored = this.#byAccount.get(id);
-    // No credential on file is a real, meaningful answer to "does this secret
-    // match?" — nothing matches — not a skipped operation [LAW:no-defensive-null-guards].
-    if (stored === undefined) return false;
+    // No credential on file still pays a full scrypt (verifyAbsent), so "no such
+    // credential" cannot be told from "wrong secret" by timing — nothing matches,
+    // and it takes the same time to say so [LAW:no-defensive-null-guards].
+    if (stored === undefined) return verifyAbsent(secret, this.#params);
     return verifyCredential(secret, stored);
   }
 
