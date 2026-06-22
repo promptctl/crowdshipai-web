@@ -7,8 +7,8 @@
  * trivially testable; the real rules (hard line, conduct, maturity/age) plug in
  * without touching the path they flow through.
  */
-export type { ActorRef, ConductAction, PolicyRuleId, PublishedSurface } from './ids.js';
-export { actorRef, conductAction, policyRuleId, publishedSurface } from './ids.js';
+export type { ActorRef, ConductAction, EntryId, PolicyRuleId, PublishedSurface, ReportTarget } from './ids.js';
+export { actorRef, conductAction, entryId, policyRuleId, publishedSurface, reportTarget } from './ids.js';
 
 export type {
   PolicyBoundary,
@@ -22,6 +22,25 @@ export type {
 export { createPolicyBoundary } from './boundary.js';
 
 export { createMaturityGateRule } from './maturity-gate.js';
+
+/**
+ * The moderation pipeline (o97.4): report, review, action — all recorded to one
+ * append-only {@link AuditTrail}, the system of record. The trail is the single
+ * source of truth for moderation history; the review queue and the incident
+ * classifier are PURE projections of it, never a second store. The pipeline WRAPS the
+ * policy boundary at the edge (record each incident decision) and never changes
+ * `decide`'s purity.
+ */
+export type { Report } from './report.js';
+
+export type { Resolution, ReviewDisposition } from './review.js';
+export { REVIEW_DISPOSITIONS } from './review.js';
+
+export type { AuditTrail, AuditTrailDeps, ModerationEvent, RecordedEvent } from './audit.js';
+export { createInMemoryAuditTrail } from './audit.js';
+
+export type { QueueItem } from './queue.js';
+export { incidentViolations, isIncident, reviewQueue } from './queue.js';
 
 export type { ContentDescriptor, MaturityLevel, MaturityRating, UnknownMaturityLevel } from './maturity.js';
 export {
