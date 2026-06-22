@@ -1,3 +1,12 @@
+import {
+  contentDescriptor,
+  GENERAL_AUDIENCE,
+  maturityRating,
+  type ContentDescriptor,
+  type MaturityLevel,
+  type MaturityRating,
+} from '@crowdship/moderation';
+
 import type {
   ChannelSlug,
   ChannelView,
@@ -5,6 +14,22 @@ import type {
   PricedOffer,
   StreamSummary,
 } from './types';
+
+/**
+ * Build a seed rating from a level and bare descriptor strings, unwrapping the
+ * branded-label constructors loudly: a blank descriptor in hand-written seed data
+ * is a programmer error to surface at boot, never a silently dropped label
+ * [LAW:no-silent-failure]. Throwaway, like the rest of this fake.
+ */
+const rating = (level: MaturityLevel, ...descriptors: readonly string[]): MaturityRating =>
+  maturityRating(
+    level,
+    descriptors.map((raw): ContentDescriptor => {
+      const d = contentDescriptor(raw);
+      if (!d.ok) throw new Error(`seed: invalid content descriptor ${JSON.stringify(raw)}`);
+      return d.value;
+    }),
+  );
 
 /**
  * An in-memory CrowdCatalog with hand-seeded builders. This is throwaway: it
@@ -27,6 +52,7 @@ interface SeedBuilder {
   readonly isLive: boolean;
   readonly accentHue: number;
   readonly bio: string;
+  readonly maturity: MaturityRating;
   readonly menu: readonly PricedOffer[];
   readonly chat: ChannelView['chat'];
 }
@@ -41,6 +67,7 @@ const SEED: readonly SeedBuilder[] = [
     isLive: true,
     accentHue: 28,
     bio: 'systems gremlin. i make video pipelines do things they should not. building in public so you can heckle.',
+    maturity: GENERAL_AUDIENCE,
     menu: [
       { id: 'o1', label: 'Shoutout', priceCoins: 50, effect: { kind: 'shoutout', summary: 'I read your name out loud, on stream.' } },
       { id: 'o2', label: 'Vote: what filter next?', priceCoins: 200, effect: { kind: 'poll-vote', summary: 'Your coins push the next filter up the queue.' } },
@@ -63,6 +90,7 @@ const SEED: readonly SeedBuilder[] = [
     isLive: true,
     accentHue: 200,
     bio: 'compiler nerd. today we make the borrow checker that haunts your dreams. gentle, i promise.',
+    maturity: GENERAL_AUDIENCE,
     menu: [
       { id: 'o1', label: 'Name a lifetime', priceCoins: 75, effect: { kind: 'name-thing', summary: "You name a lifetime in the code. It's immortalized in git blame." } },
       { id: 'o2', label: 'Make me explain it slower', priceCoins: 120, effect: { kind: 'pacing', summary: 'I back up and explain the last concept like you are five.' } },
@@ -82,6 +110,8 @@ const SEED: readonly SeedBuilder[] = [
     isLive: true,
     accentHue: 320,
     bio: 'i make small weird games fast. mature content sometimes — age-gated, behave.',
+    // The one mature builder in the seed — the age gate has something real to act on.
+    maturity: rating('mature', 'violence'),
     menu: [
       { id: 'o1', label: 'Spawn a cursed item', priceCoins: 300, effect: { kind: 'game-inject', summary: 'I add an item you describe to the loot table. Within reason.' } },
       { id: 'o2', label: 'Name the final boss', priceCoins: 800, effect: { kind: 'name-thing', summary: 'The boss is named whatever you say. Live.' } },
@@ -101,6 +131,7 @@ const SEED: readonly SeedBuilder[] = [
     isLive: true,
     accentHue: 140,
     bio: 'i fix things on fire calmly. the resume is the stream. recruiters welcome.',
+    maturity: GENERAL_AUDIENCE,
     menu: [
       { id: 'o1', label: 'Buy me a coffee (visible)', priceCoins: 100, effect: { kind: 'tip', summary: 'A coffee appears on my desk overlay. Thank you.' } },
       { id: 'o2', label: 'Ask a question, jump the queue', priceCoins: 250, effect: { kind: 'priority-qa', summary: 'Your question goes to the top. I answer it on air.' } },
@@ -116,6 +147,7 @@ const SEED: readonly SeedBuilder[] = [
     isLive: false,
     accentHue: 50,
     bio: 'minimal tools, sharp edges. back tonight.',
+    maturity: GENERAL_AUDIENCE,
     menu: [
       { id: 'o1', label: 'Shoutout when I return', priceCoins: 50, effect: { kind: 'shoutout', summary: 'First thing when I go live: your name.' } },
     ],
@@ -131,6 +163,7 @@ const toSummary = (b: SeedBuilder): StreamSummary => ({
   viewerCount: b.viewerCount,
   isLive: b.isLive,
   accentHue: b.accentHue,
+  maturity: b.maturity,
 });
 
 const bySlug = new Map(SEED.map((b) => [b.slug, b]));
