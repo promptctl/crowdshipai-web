@@ -6,6 +6,14 @@ import {
   type MaturityLevel,
   type MaturityRating,
 } from '@crowdship/moderation';
+import {
+  authorMenu,
+  DEFAULT_MENU_POLICY,
+  findOffer,
+  offerId,
+  type Menu,
+  type OfferDraft,
+} from '@crowdship/menu';
 
 import type {
   ChannelSlug,
@@ -30,6 +38,28 @@ const rating = (level: MaturityLevel, ...descriptors: readonly string[]): Maturi
       return d.value;
     }),
   );
+
+/**
+ * Author the authoritative domain {@link Menu} for a builder from the SAME seed
+ * offers the display projection is built from, so the price a backer sees and the
+ * price the ledger charges come from one source and cannot drift
+ * [LAW:one-source-of-truth]. The display view-model carries the builder's `label`
+ * and human `summary`; the domain offer carries the branded price the purchase
+ * pipeline charges and the effect, with the summary preserved as the effect's
+ * open params. Authoring is the menu's own trust boundary; a fault in hand-written
+ * seed data is a programmer error to surface at boot, never a silently dropped
+ * offer [LAW:no-silent-failure].
+ */
+const domainMenu = (offers: readonly PricedOffer[]): Menu => {
+  const drafts: readonly OfferDraft[] = offers.map((o) => ({
+    id: o.id,
+    price: BigInt(o.priceCoins),
+    effect: { kind: o.effect.kind, params: o.effect.summary },
+  }));
+  const authored = authorMenu(drafts, DEFAULT_MENU_POLICY);
+  if (!authored.ok) throw new Error(`seed: invalid menu: ${JSON.stringify(authored.error)}`);
+  return authored.value;
+};
 
 /**
  * An in-memory CrowdCatalog with hand-seeded builders. This is throwaway: it
@@ -168,6 +198,10 @@ const toSummary = (b: SeedBuilder): StreamSummary => ({
 
 const bySlug = new Map(SEED.map((b) => [b.slug, b]));
 
+// The authoritative domain menus, authored once from the seed and indexed by slug —
+// the purchase lookup's single source, derived from the same offers the display is.
+const menuBySlug = new Map(SEED.map((b) => [b.slug, domainMenu(b.menu)]));
+
 /**
  * Construct the in-memory catalog. Returns the CrowdCatalog interface, never the
  * concrete type — callers depend on the seam, not the fake.
@@ -190,5 +224,17 @@ export const createFakeCatalog = (): CrowdCatalog => ({
       menu: b.menu,
       chat: b.chat,
     });
+  },
+
+  purchasable: (slug, rawOfferId) => {
+    const menu = menuBySlug.get(slug);
+    if (menu === undefined) return Promise.resolve(null);
+    // A blank offer id is genuine optionality from untrusted input (a hand-built
+    // request), so it resolves to "no such offer", never a thrown guard
+    // [LAW:no-defensive-null-guards]. A valid id resolves to the one offer it names
+    // or nothing — findOffer's unique-by-construction contract.
+    const id = offerId(rawOfferId);
+    if (!id.ok) return Promise.resolve(null);
+    return Promise.resolve(findOffer(menu, id.value) ?? null);
   },
 });

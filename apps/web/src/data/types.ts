@@ -1,4 +1,5 @@
 import type { MaturityRating } from '@crowdship/moderation';
+import type { PricedOffer as DomainOffer } from '@crowdship/menu';
 
 /**
  * View-model types for the watch experience, and the single read seam the UI
@@ -107,4 +108,15 @@ export interface CrowdCatalog {
   liveStreams(): Promise<readonly StreamSummary[]>;
   /** The full watch context for one channel, or null if no such channel exists. */
   channel(slug: ChannelSlug): Promise<ChannelView | null>;
+  /**
+   * The authoritative offer a backer chose, by channel and offer id — or null if
+   * no such offer exists on that channel. Unlike {@link ChannelView}'s menu, which
+   * is a display projection, this returns the domain {@link DomainOffer} the
+   * purchase pipeline charges against: a branded `CoinAmount` price and an
+   * effect, validated by the menu's own authoring boundary. The buy path needs
+   * domain truth, not the view shape, and reads the price from this one source so a
+   * backer can never be charged a figure the display and the ledger disagree on
+   * [LAW:one-source-of-truth].
+   */
+  purchasable(slug: ChannelSlug, offerId: string): Promise<DomainOffer | null>;
 }
