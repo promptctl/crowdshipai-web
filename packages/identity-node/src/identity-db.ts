@@ -31,6 +31,16 @@ type DatabaseSync = import('node:sqlite').DatabaseSync;
  */
 export const openIdentityDb = (location: string): DatabaseSync => {
   const db = new DatabaseSync(location);
+  // `next build` collects page data in parallel worker PROCESSES that each open this
+  // same file; without a busy timeout their concurrent opens and schema-creation writes
+  // collide as `database is locked` the instant a lock is contended. With one, a
+  // contended lock waits-and-retries up to this budget and — if the lock truly outlasts
+  // it — still throws loudly [LAW:no-silent-failure — a bounded wait, never a silent
+  // give-up or a swallowed error]. Set FIRST, before any other pragma, because the
+  // `journal_mode = WAL` switch below itself takes a lock that must be allowed to wait.
+  // This is the correct production posture too — concurrent requests serialize on the
+  // writer the same way.
+  db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA synchronous = NORMAL;');
   db.exec(`
