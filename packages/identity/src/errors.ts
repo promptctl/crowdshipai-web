@@ -31,3 +31,24 @@ export type ResetError = { readonly kind: 'invalid-or-expired' };
  * the caller could not have constructed an illegal member of [LAW:types-are-the-program].
  */
 export type RoleChangeError = { readonly kind: 'no-such-account' };
+
+/**
+ * Claiming a builder channel fails as exactly one of three named values: the
+ * desired handle is already someone's, the claiming account already holds a
+ * channel (one channel per account, for now), or the account does not exist. The
+ * handle value itself cannot be malformed here — `Handle` is constructed at the
+ * edge, so by the time a claim is attempted that trust boundary is already crossed
+ * [LAW:single-enforcer].
+ */
+export type ClaimError =
+  | { readonly kind: 'handle-taken' }
+  | { readonly kind: 'already-has-channel' }
+  | { readonly kind: 'no-such-account' };
+
+/** Renaming a channel fails because the target handle is taken, or the channel does not exist. */
+export type RenameError =
+  | { readonly kind: 'handle-taken' }
+  | { readonly kind: 'no-such-channel' };
+
+/** Editing a channel's profile fails only because the channel does not exist. */
+export type EditProfileError = { readonly kind: 'no-such-channel' };

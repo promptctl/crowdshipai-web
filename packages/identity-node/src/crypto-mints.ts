@@ -1,10 +1,13 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
   accountId,
+  channelId,
   recoveryToken,
   sessionId,
   sessionToken,
   type AccountId,
+  type ChannelId,
+  type ChannelIdMint,
   type IdMint,
   type RecoveryToken,
   type SecretMint,
@@ -16,13 +19,21 @@ import { orThrow } from './internal.js';
 /** 256 bits — well past any guessing or birthday-collision concern for a bearer secret. */
 const TOKEN_BYTES = 32;
 
-/** Ids need only be unique; a v4 UUID from the platform CSPRNG is more than enough. */
-export class CryptoIdMint implements IdMint {
+/**
+ * Ids need only be unique; a v4 UUID from the platform CSPRNG is more than enough.
+ * One adapter satisfies both id-minting ports — the auth {@link IdMint} and the
+ * {@link ChannelIdMint} — while the ports stay separate so each service depends on
+ * exactly the minting it uses [LAW:decomposition].
+ */
+export class CryptoIdMint implements IdMint, ChannelIdMint {
   newAccountId(): AccountId {
     return orThrow(accountId(randomUUID()), 'account id from randomUUID');
   }
   newSessionId(): SessionId {
     return orThrow(sessionId(randomUUID()), 'session id from randomUUID');
+  }
+  newChannelId(): ChannelId {
+    return orThrow(channelId(randomUUID()), 'channel id from randomUUID');
   }
 }
 
