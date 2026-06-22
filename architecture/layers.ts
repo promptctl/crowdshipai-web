@@ -19,7 +19,7 @@ export const LAYERS = [
   {
     id: 'foundation',
     description:
-      'Cross-cutting primitives that belong to no domain (brand, result, time). Depend on nothing internal.',
+      'Cross-cutting primitives that belong to no domain — the vocabulary every layer stands on (e.g. brand, result, time, the coin unit). Depend on nothing internal.',
   },
   {
     id: 'core',
@@ -47,6 +47,7 @@ const ASSIGN: Readonly<Record<string, RepoLayerId>> = {
 
   '@crowdship/identity': 'core',
   '@crowdship/ledger-kernel': 'core',
+  '@crowdship/menu': 'core',
   '@crowdship/rate-limit': 'core',
 
   '@crowdship/identity-node': 'adapter',

@@ -94,7 +94,17 @@ importers:
         specifier: 0.17.7
         version: 0.17.7
 
-  packages/ledger-kernel: {}
+  packages/ledger-kernel:
+    dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+
+  packages/menu:
+    dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
 
   packages/rate-limit:
     dependencies:

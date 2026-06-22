@@ -3,8 +3,11 @@ export type { Brand } from './brand.js';
 export type { Result } from './result.js';
 export { err, ok } from './result.js';
 
-export type { CoinAmount, CoinAmountError } from './money.js';
-export { coinAmount } from './money.js';
+// The coin unit now lives in foundation (@crowdship/std); re-exported here so
+// the kernel's public surface is unchanged for existing consumers
+// [LAW:one-source-of-truth].
+export type { CoinAmount, CoinAmountError } from '@crowdship/std';
+export { coinAmount } from '@crowdship/std';
 
 export type {
   AccountId,
