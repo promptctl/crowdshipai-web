@@ -1,5 +1,6 @@
 import {
   createConductRule,
+  createHardLineRule,
   createMaturityGateRule,
   createPolicyBoundary,
   policyRuleId,
@@ -32,15 +33,18 @@ const ruleId = (raw: string): PolicyRuleId => {
   return id.value;
 };
 
-// The rules register here as their tickets land — the hard line (o97.6) is the one
-// still to come — each a push to this array, never a change to any caller of
-// getPolicyBoundary() [LAW:locality-or-seam]. The age gate (o97.3) gates any
-// viewer-access subject by the content's rating; the conduct rule (o97.5) denies any
-// actor-conduct subject whose `standing` is barred — the actor's bar is resolved from
-// their identity sanctions at the edge (see `./sanctions`) and handed in.
+// The rules register here as their tickets land — each a push to this array, never a
+// change to any caller of getPolicyBoundary() [LAW:locality-or-seam]. The age gate
+// (o97.3) gates any viewer-access subject by the content's rating; the conduct rule
+// (o97.5) denies any actor-conduct subject whose `standing` is barred — the actor's
+// bar is resolved from their identity sanctions at the edge (see `./sanctions`) and
+// handed in. The hard line (o97.6) denies any published-media subject a content
+// classifier found prohibited — the classifier verdict is resolved at the edge and
+// handed in on the subject, the same way every fact reaches a rule.
 const RULES: readonly PolicyRule[] = [
   createMaturityGateRule(ruleId('maturity-gate')),
   createConductRule(ruleId('conduct')),
+  createHardLineRule(ruleId('hard-line')),
 ];
 
 // One boundary per process. It is stateless — a pure decision over an immutable rule
