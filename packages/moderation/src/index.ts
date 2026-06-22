@@ -13,6 +13,16 @@ export { actorRef, conductAction, policyRuleId, publishedSurface } from './ids.j
 export type { PolicyBoundary, PolicyDecision, PolicyRule, PolicySubject, PolicyViolation } from './boundary.js';
 export { createPolicyBoundary } from './boundary.js';
 
+export type { ContentDescriptor, MaturityLevel, MaturityRating, UnknownMaturityLevel } from './maturity.js';
+export {
+  contentDescriptor,
+  GENERAL_AUDIENCE,
+  maturityAtLeast,
+  maturityLevel,
+  maturityRating,
+  MATURITY_LEVELS,
+} from './maturity.js';
+
 /** The construction error every branded label returns; its home is foundation,
  *  re-exported so a consumer has the package's whole surface in one import. */
 export type { BlankError } from '@crowdship/std';
