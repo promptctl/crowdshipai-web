@@ -1,9 +1,12 @@
 import { notFound } from 'next/navigation';
 
 import { isPlatformStaff } from '@crowdship/identity';
+import { reviewQueue } from '@crowdship/moderation';
 
 import { AdminConsole } from '@/components/AdminConsole';
+import { getAuditTrail } from '@/server/audit-trail';
 import { currentPrincipal } from '@/server/principal';
+import { toQueueView } from '@/server/review-core';
 import { getStaffRoster } from '@/server/staff';
 
 /**
@@ -19,5 +22,10 @@ export default async function AdminPage() {
   const principal = await currentPrincipal();
   if (principal === null || !isPlatformStaff(principal, getStaffRoster())) notFound();
 
-  return <AdminConsole />;
+  // The review queue is a PROJECTION of the one trail [LAW:one-source-of-truth], read at
+  // this server edge and flattened to serializable views so no domain handle crosses into
+  // the client [LAW:effects-at-boundaries].
+  const queue = reviewQueue(await getAuditTrail().entries()).map(toQueueView);
+
+  return <AdminConsole queue={queue} />;
 }

@@ -3,9 +3,12 @@
 import { useActionState } from 'react';
 
 import { VERIFICATION_STATUSES } from '@crowdship/identity';
+import { REVIEW_DISPOSITIONS } from '@crowdship/moderation';
 
 import type { SanctionResult, VerifyResult } from '@/data/admin-result';
+import type { QueueItemView, ResolveResult } from '@/data/review-result';
 import { issueSanction, setChannelVerification } from '@/server/admin-actions';
+import { resolveItem } from '@/server/review-actions';
 
 /**
  * The platform-staff console: the two operator powers the staff axis unlocks —
@@ -65,6 +68,23 @@ const sanctionNotice = (result: SanctionResult): Notice => {
   }
 };
 
+const resolveNotice = (result: ResolveResult): Notice => {
+  switch (result.kind) {
+    case 'resolved':
+      return { tone: 'good', text: `Recorded as ${result.disposition}.` };
+    case 'invalid-item':
+      return { tone: 'bad', text: 'No such item to resolve.' };
+    case 'invalid-disposition':
+      return { tone: 'bad', text: 'Choose a verdict.' };
+    case 'invalid-note':
+      return { tone: 'bad', text: 'A verdict needs a note explaining it.' };
+    case 'forbidden':
+      return { tone: 'bad', text: NO_AUTHORITY };
+    case 'must-authenticate':
+      return { tone: 'bad', text: SIGN_IN };
+  }
+};
+
 const FIELD =
   'rounded-md border border-edge bg-surface-2 px-3 py-2 text-sm text-chalk outline-none focus:border-accent-dim';
 const LABEL = 'flex flex-col gap-1 text-xs text-fog';
@@ -80,7 +100,72 @@ function NoticeLine({ notice }: { readonly notice: Notice | null }) {
   );
 }
 
-export function AdminConsole() {
+/**
+ * What the reviewer reads above each item's resolve form — the human-facing summary of a
+ * queue item, by arm. A `report` shows who flagged what and why; an `incident` shows the
+ * subject and the rules it broke. Exhaustive on `kind` with no default arm, so a new
+ * queue arm fails to compile here until it is given a summary [LAW:types-are-the-program].
+ */
+function ItemSummary({ item }: { readonly item: QueueItemView }) {
+  switch (item.kind) {
+    case 'report':
+      return (
+        <div className="text-sm text-chalk">
+          <span className="font-semibold">report</span> on <span className="text-fog">{item.target}</span>
+          <p className="mt-0.5 text-xs text-fog">“{item.reason}” — {item.reporter}</p>
+        </div>
+      );
+    case 'incident':
+      return (
+        <div className="text-sm text-chalk">
+          <span className="font-semibold">incident</span> · <span className="text-fog">{item.subject}</span>
+          <p className="mt-0.5 text-xs text-fog">{item.violations.join('; ')}</p>
+        </div>
+      );
+  }
+}
+
+/**
+ * One open review item with its own resolve form. Each item owns its pending state and
+ * notice independently, so resolving one never blocks another — the per-item state is the
+ * value the form carries, not a mode of the console [LAW:dataflow-not-control-flow]. The
+ * entry id rides as a hidden field, named verbatim so the verdict closes exactly this
+ * item.
+ */
+function ReviewItem({ item }: { readonly item: QueueItemView }) {
+  const [result, action, pending] = useActionState<ResolveResult | null, FormData>(resolveItem, null);
+
+  return (
+    <li className="rounded-md border border-edge bg-surface-2 p-3">
+      <ItemSummary item={item} />
+      <form action={action} className="mt-2 flex flex-col gap-2">
+        <input type="hidden" name="entry" value={item.id} />
+        <div className="grid grid-cols-2 gap-2">
+          <label className={LABEL}>
+            verdict
+            <select name="disposition" defaultValue={REVIEW_DISPOSITIONS[0]} className={FIELD}>
+              {REVIEW_DISPOSITIONS.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={LABEL}>
+            note
+            <input name="note" required placeholder="why" className={FIELD} />
+          </label>
+        </div>
+        <NoticeLine notice={result === null ? null : resolveNotice(result)} />
+        <button type="submit" disabled={pending} className={`${SUBMIT} self-start`}>
+          {pending ? '…' : 'resolve'}
+        </button>
+      </form>
+    </li>
+  );
+}
+
+export function AdminConsole({ queue }: { readonly queue: readonly QueueItemView[] }) {
   const [verify, verifyAction, verifying] = useActionState<VerifyResult | null, FormData>(
     setChannelVerification,
     null,
@@ -150,6 +235,19 @@ export function AdminConsole() {
             {sanctioning ? '…' : 'impose sanction'}
           </button>
         </form>
+      </section>
+
+      <section className="mt-10">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-fog">review queue</h2>
+        {queue.length === 0 ? (
+          <p className="mt-3 text-sm text-fog">Nothing awaiting review.</p>
+        ) : (
+          <ul className="mt-3 flex flex-col gap-3">
+            {queue.map((item) => (
+              <ReviewItem key={item.id} item={item} />
+            ))}
+          </ul>
+        )}
       </section>
     </main>
   );
