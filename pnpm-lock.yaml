@@ -120,6 +120,25 @@ importers:
 
   packages/std: {}
 
+  services/pool:
+    dependencies:
+      '@crowdship/ledger':
+        specifier: workspace:*
+        version: link:../../packages/ledger
+      '@crowdship/ledger-kernel':
+        specifier: workspace:*
+        version: link:../../packages/ledger-kernel
+      '@crowdship/settlement':
+        specifier: workspace:*
+        version: link:../../packages/settlement
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../../packages/std
+    devDependencies:
+      '@crowdship/release':
+        specifier: workspace:*
+        version: link:../release
+
   services/purchase:
     dependencies:
       '@crowdship/ledger':
