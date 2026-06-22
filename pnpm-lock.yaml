@@ -52,6 +52,12 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/identity:
+    dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+
   packages/ledger:
     dependencies:
       '@crowdship/ledger-kernel':
@@ -59,6 +65,8 @@ importers:
         version: link:../ledger-kernel
 
   packages/ledger-kernel: {}
+
+  packages/std: {}
 
 packages:
 
