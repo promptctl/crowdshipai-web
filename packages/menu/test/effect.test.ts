@@ -1,6 +1,17 @@
+import type { Brand } from '@crowdship/std';
 import { describe, expect, it } from 'vitest';
 
-import { effectKind } from '../src/index.js';
+import { effectKind, type EffectKind } from '../src/index.js';
+
+// A type-level theorem, checked by `tsc` rather than at runtime: `EffectKind` is the
+// brand of an ARBITRARY string, never a closed union of named kinds. The brand of a
+// generic string is assignable to it today; the day anyone narrows it to enumerate
+// allowed kinds, that assignability fails and this stops compiling. The anti-catalog
+// rule the founding document demands, expressed as a type instead of trusted to prose
+// [LAW:types-are-the-program]. This is the compile-time half of the extensibility guard
+// whose runtime half lives in the purchase service's end-to-end suite.
+type Assert<T extends true> = T;
+type _EffectKindStaysOpen = Assert<Brand<string, 'EffectKind'> extends EffectKind ? true : false>;
 
 describe('effectKind', () => {
   it('accepts any non-blank builder label — the platform enumerates nothing', () => {
