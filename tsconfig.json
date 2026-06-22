@@ -4,6 +4,8 @@
     "packages/*/src/**/*",
     "packages/*/test/**/*",
     "packages/*/integration/**/*",
+    "services/*/src/**/*",
+    "services/*/test/**/*",
     "architecture/**/*",
     "vitest.config.ts",
     "vitest.integration.config.ts"
