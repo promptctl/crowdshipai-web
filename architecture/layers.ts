@@ -32,6 +32,11 @@ export const LAYERS = [
       'Binds an adopted runtime or vendor to a core behind a seam (node/sqlite, TigerBeetle). May depend on cores and foundation.',
   },
   {
+    id: 'service',
+    description:
+      'A use-case that composes cores and adapters into one dataflow pipeline (e.g. purchase-to-fire: post coins, then fire the effect). The product surface drives it; it depends on no other service.',
+  },
+  {
     id: 'app',
     description: 'The product surface. Composes everything beneath it; nothing depends on it.',
   },
@@ -52,6 +57,8 @@ const ASSIGN: Readonly<Record<string, RepoLayerId>> = {
 
   '@crowdship/identity-node': 'adapter',
   '@crowdship/ledger': 'adapter',
+
+  '@crowdship/purchase': 'service',
 
   '@crowdship/web': 'app',
 };

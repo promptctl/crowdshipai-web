@@ -9,6 +9,7 @@ export default defineConfig({
     // need real engines stay out (see vitest.integration.config.ts).
     include: [
       'packages/*/test/**/*.test.ts',
+      'services/*/test/**/*.test.ts',
       'apps/web/test/**/*.test.ts',
       // The cross-cutting workspace dependency-policy enforcer [LAW:single-enforcer].
       'architecture/**/*.test.ts',
