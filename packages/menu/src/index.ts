@@ -11,6 +11,20 @@ export { effectKind } from './effect.js';
 export type { OfferId, PricedOffer } from './offer.js';
 export { offerId } from './offer.js';
 
+// Authoring: the boundary that turns a builder's raw, untrusted drafts into a
+// validated Menu — every field branded at its trust boundary, every fault reported
+// at once, each id identifying exactly one offer. This is "the menu belongs to the
+// builder" made into a type: they wire up, price, and arrange; we validate the rail.
+export type {
+  Menu,
+  MenuProblem,
+  MenuProblems,
+  OfferDraft,
+  OfferProblem,
+  OfferProblems,
+} from './authoring.js';
+export { authorMenu, authorOffer, findOffer } from './authoring.js';
+
 // The effect is carried as data; the edge performs it [LAW:effects-at-boundaries].
 // The performer is one method that takes any effect — never one per kind — and a
 // data-driven dispatcher composes it from per-kind handlers the builder registers.
