@@ -52,7 +52,9 @@ export type {
 export { StandardChannelService } from './channel-service.js';
 
 export type { Principal } from './authz.js';
-export { mayManageChannel, isPlatformStaff, maySetVerification } from './authz.js';
+export { mayManageChannel, isPlatformStaff, maySetVerification, maySanction } from './authz.js';
+export type { StaffRoster } from './staff.js';
+export { staffRoster, EMPTY_ROSTER } from './staff.js';
 
 /**
  * Conduct enforcement (o97.5): bans and suspensions recorded against the account so
