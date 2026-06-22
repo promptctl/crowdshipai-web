@@ -35,6 +35,9 @@ importers:
       '@crowdship/std':
         specifier: workspace:*
         version: link:../../packages/std
+      '@crowdship/stream':
+        specifier: workspace:*
+        version: link:../../packages/stream
       next:
         specifier: ^15.1.3
         version: 15.5.19(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -137,6 +140,12 @@ importers:
         version: link:../std
 
   packages/std: {}
+
+  packages/stream:
+    dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
 
   services/on-ramp:
     dependencies:
