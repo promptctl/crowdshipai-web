@@ -1,7 +1,10 @@
 export type { LedgerView, PostingRejection } from './posting.js';
 export { decidePosting } from './posting.js';
 
-export { resultingBalances } from './balances.js';
+export { foldBalances, resultingBalances } from './balances.js';
+
+export type { BalanceDrift, LedgerIntegrity } from './audit.js';
+export { auditLedger, LedgerIntegrityError } from './audit.js';
 
 export type {
   IdempotencyConflict,

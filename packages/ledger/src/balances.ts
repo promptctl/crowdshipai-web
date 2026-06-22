@@ -2,6 +2,31 @@ import type { AccountId, Transaction } from '@crowdship/ledger-kernel';
 import { netEffect } from '@crowdship/ledger-kernel';
 
 /**
+ * The single author of "what are all balances, folded from the authoritative
+ * log" [LAW:one-source-of-truth]. Given the whole log it returns each account's
+ * net balance, dropping any that nets to zero so the map is exactly "accounts
+ * holding a non-zero balance" — it never implies a balance that is not there.
+ *
+ * Pure: the caller supplies the log [LAW:effects-at-boundaries]. Both the store's
+ * derived balance view and the integrity audit's authoritative re-derivation go
+ * through this one fold, so they cannot disagree by using two algorithms — any
+ * reconciliation drift the audit finds is a real divergence in a *stored* view,
+ * not an artifact of folding twice [LAW:one-source-of-truth].
+ */
+export const foldBalances = (history: readonly Transaction[]): ReadonlyMap<AccountId, bigint> => {
+  const balances = new Map<AccountId, bigint>();
+  for (const txn of history) {
+    for (const [account, delta] of netEffect(txn)) {
+      balances.set(account, (balances.get(account) ?? 0n) + delta);
+    }
+  }
+  for (const [account, balance] of balances) {
+    if (balance === 0n) balances.delete(account);
+  }
+  return balances;
+};
+
+/**
  * The single author of "what balances did this post produce" [LAW:one-source-of-
  * truth]. Given the authoritative log and one transaction in it, it derives the
  * resulting balance of every account that transaction changed, *as of that
