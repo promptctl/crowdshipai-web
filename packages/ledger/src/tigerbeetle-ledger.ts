@@ -1,16 +1,33 @@
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
-import type { Account, AccountId, AccountKind, Result, Timestamp } from '@crowdship/ledger-kernel';
-import { err, mayGoNegative, ok, timestamp } from '@crowdship/ledger-kernel';
+import type {
+  Account,
+  AccountId,
+  AccountKind,
+  Result,
+  Timestamp,
+} from '@crowdship/ledger-kernel';
+import {
+  accountId,
+  coinAmount,
+  err,
+  mayGoNegative,
+  ok,
+  timestamp,
+  transactionReason,
+} from '@crowdship/ledger-kernel';
 import type {
   Account as TBAccount,
+  AccountFilter as TBAccountFilter,
   Client as TBClient,
   Transfer as TBTransfer,
 } from 'tigerbeetle-node';
 
 import { touchedAccounts, transactionIdOf } from './movement.js';
+import { createInMemoryNameStore, type NameStore } from './name-store.js';
 import type { AccountConflict, Ledger, PostError, PostReceipt, PostRequest } from './port.js';
+import type { AccountMovement, LedgerQuery, MovementDirection } from './query.js';
 
 // tigerbeetle-node is a CommonJS native addon; under NodeNext ESM its enum exports
 // are not statically importable as named bindings, so it is loaded through
@@ -18,7 +35,8 @@ import type { AccountConflict, Ledger, PostError, PostReceipt, PostRequest } fro
 // erased `import type`s above. One load, reused for the life of the module.
 const nodeRequire = createRequire(import.meta.url);
 const tb = nodeRequire('tigerbeetle-node') as typeof import('tigerbeetle-node');
-const { createClient, AccountFlags, TransferFlags, CreateAccountStatus, CreateTransferStatus } = tb;
+const { createClient, AccountFlags, AccountFilterFlags, TransferFlags, CreateAccountStatus, CreateTransferStatus } =
+  tb;
 
 /** The cluster this ledger talks to. The buy/sell rate and every other policy
  *  live elsewhere; here is only where the coins are kept. */
@@ -50,9 +68,9 @@ const kindOfCode = (code: number): AccountKind | undefined =>
 // The negativity rule is the only money rule a kind decides: the mint may carry a
 // negative balance (its negative balance is the coins in circulation); every other
 // kind is held to `debits must not exceed credits` by the engine, which is exactly
-// "must not overdraft" [LAW:single-enforcer]. `history` is set so the audit/query
-// API (ledger .6) and the stream's transparent settlement view can read
-// point-in-time balances without reopening accounts.
+// "must not overdraft" [LAW:single-enforcer]. `history` is set so the `LedgerQuery`
+// seam and the stream's transparent settlement view can read point-in-time balances
+// from the engine's own history without reopening accounts.
 const flagsFor = (kind: AccountKind): number =>
   AccountFlags.history | (mayGoNegative(kind) ? AccountFlags.none : AccountFlags.debits_must_not_exceed_credits);
 
@@ -79,6 +97,31 @@ const nsToTimestamp = (ns: bigint): Timestamp => {
   const ms = timestamp(Number(ns / 1_000_000n));
   if (!ms.ok) throw new Error(`engine returned an unrepresentable timestamp: ${ns}`);
   return ms.value;
+};
+
+// The engine timestamps movements in nanoseconds; a domain moment is epoch ms.
+// "At or before millisecond T" is every engine ns through the last ns of that
+// millisecond, so the inclusive ns ceiling that maps a ms cutoff onto the engine's
+// clock is (T+1)·1e6 − 1. This is what makes the fake's "occurredAt ≤ asOf" fold and
+// the engine's `timestamp_max` filter agree on which movements count.
+const msCeilingNs = (ms: Timestamp): bigint => (BigInt(ms) + 1n) * 1_000_000n - 1n;
+
+// TigerBeetle caps a single query at 8189 results (its message-body limit), so a
+// full account history is read page by page until a short page proves the end was
+// reached — a money audit is never silently truncated to one page [LAW:no-silent-failure].
+const HISTORY_PAGE = 8189;
+
+// Both the account-side debit and credit transfers, oldest first: the full set of
+// movements touching an account, in commit order.
+const HISTORY_FLAGS = AccountFilterFlags.debits | AccountFilterFlags.credits;
+
+// Re-brand a value read back from the engine through the kernel's own constructor —
+// the single authority on these invariants [LAW:single-enforcer]. A recorded value
+// that fails to re-validate is not a routine error a caller handles; it is the audit
+// trail disagreeing with itself, so it halts loudly [LAW:no-silent-failure].
+const recover = <T>(result: Result<T, unknown>, what: string): T => {
+  if (!result.ok) throw new Error(`ledger corruption: ${what}: ${JSON.stringify(result.error)}`);
+  return result.value;
 };
 
 /**
@@ -122,10 +165,18 @@ class KeyedSerializer {
  * to an engine id by a pure hash, so there is nothing here that could drift from
  * the engine [LAW:one-source-of-truth].
  */
-export class TigerBeetleLedger implements Ledger {
+export class TigerBeetleLedger implements Ledger, LedgerQuery {
   readonly #serializer = new KeyedSerializer();
 
-  constructor(private readonly client: TBClient) {}
+  // The engine holds money as fingerprints, not strings: an account id and a
+  // movement's reason reach TigerBeetle only as one-way hashes. The control-plane
+  // store keeps the verbatim words beside the engine so the audit/query side can
+  // recover *which* account and *why*. It holds no money, so it is no second balance
+  // authority [LAW:one-source-of-truth] — only the engine's dictionary.
+  constructor(
+    private readonly client: TBClient,
+    private readonly names: NameStore,
+  ) {}
 
   async openAccount(account: Account): Promise<Result<void, AccountConflict>> {
     const tbAccount: TBAccount = {
@@ -152,6 +203,9 @@ export class TigerBeetleLedger implements Ledger {
     // mismatch — that is the kind-conflict, read back so the caller sees what the
     // account already is.
     if (status === CreateAccountStatus.created || status === CreateAccountStatus.exists) {
+      // The account is open under this id; record the verbatim id behind its engine
+      // fingerprint so the audit side can name it as a counterparty. Idempotent.
+      await this.names.record(accountTbId(account.id), account.id);
       return ok(undefined);
     }
     if (
@@ -253,6 +307,10 @@ export class TigerBeetleLedger implements Ledger {
     if (results.every((r) => r.status === CreateTransferStatus.created)) {
       const head = results[0];
       if (head === undefined) throw new Error('ledger corruption: created movement returned no result');
+      // Keep the verbatim reason beside the engine fingerprint it was recorded under,
+      // so the audit side can say *why* this movement happened. Only on a fresh post:
+      // a replay's reason was recorded by the original.
+      await this.names.record(reasonFp, request.reason);
       return ok(await this.#receiptFresh(request, nsToTimestamp(head.timestamp)));
     }
 
@@ -329,6 +387,119 @@ export class TigerBeetleLedger implements Ledger {
     return tbAccount.credits_posted - tbAccount.debits_posted;
   }
 
+  // The balance as it stood at `asOf` is the engine's own recorded balance at the
+  // newest movement no later than that moment — read straight from TigerBeetle's
+  // history (the `history` account flag is what makes this possible), never folded by
+  // us [LAW:one-source-of-truth]. `reversed` + `limit: 1` asks the engine for exactly
+  // that one snapshot; its absence means the account had no movement by then, so `0n`.
+  async balanceAt(account: AccountId, asOf: Timestamp): Promise<bigint> {
+    const [latest] = await this.client.getAccountBalances({
+      account_id: accountTbId(account),
+      user_data_128: 0n,
+      user_data_64: 0n,
+      user_data_32: 0,
+      code: 0,
+      timestamp_min: 0n,
+      timestamp_max: msCeilingNs(asOf),
+      limit: 1,
+      flags: HISTORY_FLAGS | AccountFilterFlags.reversed,
+    });
+    if (latest === undefined) return 0n;
+    return latest.credits_posted - latest.debits_posted;
+  }
+
+  // The audit trail of an account: every transfer leg that touched it, paired with
+  // the engine's recorded balance right after each, oldest first. The transfers and
+  // their balance snapshots are two views of the same engine history, so they come
+  // back in lockstep — zipped by their shared engine timestamp, and any disagreement
+  // is corruption surfaced loudly, not papered over [LAW:no-silent-failure]. The only
+  // thing not in the engine — the counterparty's verbatim id and the reason — is
+  // recovered from the control-plane store.
+  //
+  // Precondition: the NameStore holds a name for every account and reason in this
+  // account's history. One process recording and reading through one store satisfies
+  // it by construction; a multi-process audit needs a shared durable store. A name the
+  // store lacks is surfaced loudly, never guessed or blanked [LAW:no-silent-failure] —
+  // and it is reported as a *name* gap, distinct from engine corruption, because the
+  // money it labels is intact in the engine.
+  async historyOf(account: AccountId): Promise<readonly AccountMovement[]> {
+    const selfTbId = accountTbId(account);
+    const transfers = await this.#paginate((filter) => this.client.getAccountTransfers(filter), account);
+    const balances = await this.#paginate((filter) => this.client.getAccountBalances(filter), account);
+    if (transfers.length !== balances.length) {
+      throw new Error(
+        `ledger corruption: ${transfers.length} transfers but ${balances.length} balance snapshots for ${account}`,
+      );
+    }
+
+    const counterpartyOf = (t: TBTransfer): bigint =>
+      t.debit_account_id === selfTbId ? t.credit_account_id : t.debit_account_id;
+    const fingerprints = new Set<bigint>();
+    for (const t of transfers) {
+      fingerprints.add(t.user_data_128); // the reason's fingerprint
+      fingerprints.add(counterpartyOf(t));
+    }
+    const names = await this.names.resolve([...fingerprints]);
+    const named = (fingerprint: bigint, what: string): string => {
+      const name = names.get(fingerprint);
+      // A name gap, not engine corruption: the engine recorded the movement and its
+      // money is intact; the NameStore simply lacks the label for it. Surfaced loudly
+      // with the cause and the fix, never blanked over [LAW:no-silent-failure].
+      if (name === undefined) {
+        throw new Error(
+          `ledger: NameStore holds no ${what} for a movement touching ${account} — ` +
+            `historyOf needs a NameStore carrying every name for the movements it reads ` +
+            `(one process records and reads its own; a multi-process audit needs a shared store)`,
+        );
+      }
+      return name;
+    };
+
+    return transfers.map((t, i) => {
+      const snapshot = balances[i];
+      if (snapshot === undefined || snapshot.timestamp !== t.timestamp) {
+        throw new Error(`ledger corruption: transfer and balance history disagree for ${account}`);
+      }
+      const direction: MovementDirection = t.debit_account_id === selfTbId ? 'debit' : 'credit';
+      return {
+        occurredAt: nsToTimestamp(t.timestamp),
+        direction,
+        amount: recover(coinAmount(t.amount), 'recorded movement amount'),
+        counterparty: recover(accountId(named(counterpartyOf(t), 'counterparty id')), 'recorded counterparty id'),
+        resultingBalance: snapshot.credits_posted - snapshot.debits_posted,
+        reason: recover(transactionReason(named(t.user_data_128, 'reason')), 'recorded movement reason'),
+      };
+    });
+  }
+
+  // Reads a full account history one engine page at a time, advancing the lower
+  // timestamp bound past the last row seen until a short page proves the end was
+  // reached. Engine timestamps are unique, so `+1` skips nothing.
+  async #paginate<T extends { readonly timestamp: bigint }>(
+    query: (filter: TBAccountFilter) => Promise<T[]>,
+    account: AccountId,
+  ): Promise<T[]> {
+    const all: T[] = [];
+    let cursorMin = 0n;
+    for (;;) {
+      const page = await query({
+        account_id: accountTbId(account),
+        user_data_128: 0n,
+        user_data_64: 0n,
+        user_data_32: 0,
+        code: 0,
+        timestamp_min: cursorMin,
+        timestamp_max: 0n,
+        limit: HISTORY_PAGE,
+        flags: HISTORY_FLAGS,
+      });
+      all.push(...page);
+      const last = page[page.length - 1];
+      if (page.length < HISTORY_PAGE || last === undefined) return all;
+      cursorMin = last.timestamp + 1n;
+    }
+  }
+
   close(): Promise<void> {
     return Promise.resolve(this.client.destroy());
   }
@@ -337,12 +508,22 @@ export class TigerBeetleLedger implements Ledger {
 const describe = (results: readonly { status: number }[]): string =>
   results.map((r) => r.status).join(',');
 
-/** Builds the production ledger over a live TigerBeetle cluster. The returned
- *  ledger owns the client; `close()` releases it. */
-export const createTigerBeetleLedger = (config: TigerBeetleConfig): Ledger => {
+/** Builds the production ledger over a live TigerBeetle cluster, exposing both the
+ *  write seam and the audit/query seam. The returned ledger owns the client;
+ *  `close()` releases it.
+ *
+ *  The `names` control-plane store recovers the verbatim account ids and reasons the
+ *  engine keeps only as fingerprints. It defaults to an in-memory store — correct for
+ *  a single process and the tests; a durable, shared implementation is the production
+ *  follow-up for recovering names a *different* process recorded, and slots in here
+ *  behind the same seam with no caller change [LAW:locality-or-seam]. */
+export const createTigerBeetleLedger = (
+  config: TigerBeetleConfig,
+  names: NameStore = createInMemoryNameStore(),
+): Ledger & LedgerQuery => {
   const client = createClient({
     cluster_id: config.clusterId,
     replica_addresses: [...config.replicaAddresses],
   });
-  return new TigerBeetleLedger(client);
+  return new TigerBeetleLedger(client, names);
 };

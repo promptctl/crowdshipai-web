@@ -11,14 +11,24 @@ shipping it. That engine is **TigerBeetle**.
 ## The shape
 
 ```
-caller ── post(transfers, reason, key) ──▶  Ledger (port)  ──▶  TigerBeetle  (production)
-                                              ▲                  InMemoryLedger (the test fake)
-                                              │
+caller ── post(transfers, reason, key) ──▶  Ledger      (port: write + point-read)
+caller ── balanceAt / historyOf ─────────▶  LedgerQuery (port: read + audit)
+                                              ▲   ▲
+                                              │   └──▶ TigerBeetle  (production)
+                                              │        InMemoryLedger (the test fake)
                                   open / post / balanceOf / close
 ```
 
-`Ledger` (`src/port.ts`) is the seam. Two implementations stand behind it, and
-nothing else in the system knows which one it holds ([LAW:one-type-per-behavior]):
+The seam is two ports, cut by concern ([LAW:decomposition]): `Ledger` (`src/port.ts`)
+is the *write and point-read* surface (open / post / balanceOf / close), and
+`LedgerQuery` (`src/query.ts`) is the *read and audit* surface (point-in-time
+balances, full per-account history). A caller that only records movements depends on
+`Ledger`; one that audits depends on `LedgerQuery`; neither drags in the other. Both
+ports are implemented by the same backend so they share one source of truth — the
+engine — and cannot disagree ([LAW:one-source-of-truth]).
+
+Two implementations stand behind the seam, and nothing else in the system knows
+which one it holds ([LAW:one-type-per-behavior]):
 
 - **`TigerBeetleLedger`** (`src/tigerbeetle-ledger.ts`) — production. A thin adapter
   over a TigerBeetle cluster. It holds **no balance or account state of its own**:
@@ -62,6 +72,36 @@ processes — the platform's horizontal-scale posture. A small in-process serial
 orders same-key posts to keep the common path tidy, but the engine is the authority,
 and the integration suite proves the cross-process case against a live cluster.
 
+## The audit/query side derives from the engine
+
+`LedgerQuery` answers two questions, and every number in the answer is *derived from
+the engine's own recorded history*, never a second balance we keep and fold
+([LAW:one-source-of-truth]):
+
+- **`balanceAt(account, asOf)`** — the balance as it stood at a moment, read straight
+  from TigerBeetle's history (accounts are opened with the engine's `history` flag
+  precisely so this is possible). It is immune to every movement that came later;
+  `balanceAt(account, now)` is exactly `balanceOf`, generalised across time.
+- **`historyOf(account)`** — every transfer leg that touched the account, oldest
+  first: what moved, with whom, why, when, and the balance it left behind. Each entry
+  is one leg seen from the account's side (`credit` if coins arrived, `debit` if they
+  left), so the sign lives in a discriminator and the amount stays a positive count.
+
+**The one thing the engine cannot hold is strings.** A movement's reason and an
+account's id reach TigerBeetle only as one-way fingerprints (it stores money, not
+text). So a small **control-plane store** — `NameStore` (`src/name-store.ts`) — keeps
+`fingerprint → verbatim string` beside the engine, written when an account is opened
+and when a movement is posted, read back when history is queried. It holds no money,
+so it is no second authority that could drift ([LAW:one-source-of-truth]) — only the
+engine's dictionary. It is a seam (`InMemoryNameStore` now, a durable cross-process
+store later) so the production follow-up slots in with no caller change. `historyOf`
+requires the store to hold a name for every account and reason in an account's
+history — true by construction when one process records and reads through one store;
+a multi-process audit needs a shared durable store. A name the store lacks is
+surfaced loudly with its cause, never a blank shrugged past ([LAW:no-silent-failure]),
+and is reported as a *name gap* distinct from engine corruption — the money it labels
+is intact in the engine.
+
 ## Failures are values; corruption is loud
 
 A bad post returns a `Result` whose error names the single reason
@@ -100,11 +140,14 @@ const result = await ledger.post({ transfers: [mintToAlice], reason, idempotency
 
 ## What lives elsewhere (on purpose)
 
-- **The balance/audit query API** — full history, all-account balances, point-in-time
-  views → ledger ticket .6, built on TigerBeetle's own history (accounts are opened
-  with the engine's `history` flag so those queries are possible). This seam is the
-  write-and-point-read surface only; the richer query surface is a separate cut, not
-  an amputation ([LAW:decomposition]).
 - **Throughput / load validation at production coin velocity** → ledger ticket .7.
+- **A durable, cross-process `NameStore`** — the in-memory one recovers names in the
+  process that recorded them, which serves single-process audit and the tests; a
+  shared persistent store for recovering names a *different* process recorded slots in
+  behind the same seam.
+- **Movement-level audit fields** — an entry's domain transaction id and an
+  all-account roster are additive later (the former needs a per-movement engine key,
+  the latter an account registry TigerBeetle does not natively enumerate); the
+  per-account, per-leg history here is the foundation they would build on.
 - **The buy/sell rate** that maps coins to currency is policy and lives outside the
   ledger entirely; here a coin is only ever a whole count.
