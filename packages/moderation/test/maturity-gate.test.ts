@@ -5,6 +5,7 @@ import {
   actorRef,
   conductAction,
   createMaturityGateRule,
+  IN_GOOD_STANDING,
   maturityRating,
   policyRuleId,
   publishedSurface,
@@ -45,6 +46,7 @@ describe('the maturity gate rule', () => {
       kind: 'actor-conduct',
       actor: viewer,
       action: must(conductAction('go-live')),
+      standing: IN_GOOD_STANDING,
     };
 
     expect(rule.evaluate(text)).toEqual([]);

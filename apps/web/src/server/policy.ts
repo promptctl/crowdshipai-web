@@ -1,4 +1,5 @@
 import {
+  createConductRule,
   createMaturityGateRule,
   createPolicyBoundary,
   policyRuleId,
@@ -31,11 +32,16 @@ const ruleId = (raw: string): PolicyRuleId => {
   return id.value;
 };
 
-// The rules register here as their tickets land — the hard line (o97.6), conduct
-// (o97.5) — each a push to this array, never a change to any caller of
-// getPolicyBoundary() [LAW:locality-or-seam]. The age gate (o97.3) is live: any
-// viewer-access subject routed through `decide` is gated by the content's rating.
-const RULES: readonly PolicyRule[] = [createMaturityGateRule(ruleId('maturity-gate'))];
+// The rules register here as their tickets land — the hard line (o97.6) is the one
+// still to come — each a push to this array, never a change to any caller of
+// getPolicyBoundary() [LAW:locality-or-seam]. The age gate (o97.3) gates any
+// viewer-access subject by the content's rating; the conduct rule (o97.5) denies any
+// actor-conduct subject whose `standing` is barred — the actor's bar is resolved from
+// their identity sanctions at the edge (see `./sanctions`) and handed in.
+const RULES: readonly PolicyRule[] = [
+  createMaturityGateRule(ruleId('maturity-gate')),
+  createConductRule(ruleId('conduct')),
+];
 
 // One boundary per process. It is stateless — a pure decision over an immutable rule
 // set — so unlike the ingest broker it carries no session state to preserve across
