@@ -112,6 +112,18 @@ importers:
         specifier: workspace:*
         version: link:../std
 
+  packages/payments-stripe:
+    dependencies:
+      '@crowdship/payments':
+        specifier: workspace:*
+        version: link:../payments
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+      stripe:
+        specifier: 22.2.2
+        version: 22.2.2(@types/node@22.19.21)
+
   packages/rate-limit:
     dependencies:
       '@crowdship/std':
@@ -1146,6 +1158,15 @@ packages:
   std-env@3.10.0:
     resolution: {integrity: sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg==}
 
+  stripe@22.2.2:
+    resolution: {integrity: sha512-lRXLiarjW/I2QVa6QuFfz1Ma7Dc2yBQ7vlYH6NEmp5htMJNQGfiWExmOv0McfqY5wMCGV8DLuCvsyVRIPJlUUQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/node': '>=18'
+    peerDependenciesMeta:
+      '@types/node':
+        optional: true
+
   styled-jsx@5.1.6:
     resolution: {integrity: sha512-qSVyDTeMotdvQYoHWLNGwRFJHC+i+ZvdBRYosOFgC+Wg1vx4frN2/RG/NA7SYqqvKNLf39P2LSRA2pu6n0XYZA==}
     engines: {node: '>= 12.0.0'}
@@ -1975,6 +1996,10 @@ snapshots:
   stackback@0.0.2: {}
 
   std-env@3.10.0: {}
+
+  stripe@22.2.2(@types/node@22.19.21):
+    optionalDependencies:
+      '@types/node': 22.19.21
 
   styled-jsx@5.1.6(react@19.2.7):
     dependencies:
