@@ -6,4 +6,6 @@ coverage/
 .wrangler/
 *.log
 .env
+.env*.local
 .dev.vars
+.data/
