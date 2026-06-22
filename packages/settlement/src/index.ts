@@ -27,3 +27,22 @@ export { pledgeId, refundReason } from './pledge.js';
 
 // The lifecycle: the single owner of how a pledge moves between phases.
 export { escrow, meetCondition, release, refund } from './lifecycle.js';
+
+// Conditions: the closed, evaluable criteria a pledge releases on — data the composing
+// service embeds in its concrete Terms, judged by a pure predicate at the engine's boundary.
+export type {
+  Condition,
+  PoolTargetReached,
+  DeliverableAccepted,
+  GoalResolved,
+  DeliverableId,
+  GoalId,
+} from './condition.js';
+export { deliverableId, goalId } from './condition.js';
+export type {
+  Observation,
+  PoolObservation,
+  DeliverableObservation,
+  GoalObservation,
+} from './evaluate.js';
+export { observePool, observeDeliverable, observeGoal, isMet } from './evaluate.js';
