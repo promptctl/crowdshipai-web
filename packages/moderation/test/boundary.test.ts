@@ -5,9 +5,13 @@ import {
   actorRef,
   conductAction,
   createPolicyBoundary,
+  maturityRating,
   policyRuleId,
   publishedSurface,
   type ActorRef,
+  type ContentDescriptor,
+  type MaturityLevel,
+  type PolicyFinding,
   type PolicyRule,
   type PolicyRuleId,
   type PolicySubject,
@@ -36,23 +40,41 @@ const conductSubject = (action: string): PolicySubject => ({
   action: must(conductAction(action)),
 });
 
-/** A sample rule: objects to a banned word in published text, ignores conduct.
+const accessSubject = (level: MaturityLevel, clearance: MaturityLevel): PolicySubject => ({
+  kind: 'viewer-access',
+  viewer: actor('viewer-1'),
+  rating: maturityRating(level, [] as ContentDescriptor[]),
+  clearance,
+});
+
+/** A sample rule: objects to a banned word in published text, ignores other arms.
  *  Lives only in the test — it proves the seam without the package shipping a rule
  *  that belongs to a sibling ticket (o97.6 owns the real hard line). */
 const bansWord = (word: string): PolicyRule => ({
   id: rid('test-word-ban'),
-  evaluate: (subject) =>
+  evaluate: (subject): readonly PolicyFinding[] =>
     subject.kind === 'published-text' && subject.text.includes(word)
-      ? [{ rule: rid('test-word-ban'), reason: `text contains "${word}"` }]
+      ? [{ kind: 'violation', rule: rid('test-word-ban'), reason: `text contains "${word}"` }]
       : [],
 });
 
 /** A sample rule on the conduct axis: refuses one named action. */
 const refusesAction = (action: string): PolicyRule => ({
   id: rid('test-action-refuse'),
-  evaluate: (subject) =>
+  evaluate: (subject): readonly PolicyFinding[] =>
     subject.kind === 'actor-conduct' && subject.action === action
-      ? [{ rule: rid('test-action-refuse'), reason: `action "${action}" is refused` }]
+      ? [{ kind: 'violation', rule: rid('test-action-refuse'), reason: `action "${action}" is refused` }]
+      : [],
+});
+
+/** A sample rule on the access axis: gates content at a floor away from a viewer
+ *  not cleared to it. Stands in for the real maturity gate so the boundary's gated
+ *  fold is proven here without coupling to that rule's own tests. */
+const gatesAbove = (floor: MaturityLevel): PolicyRule => ({
+  id: rid('test-access-gate'),
+  evaluate: (subject): readonly PolicyFinding[] =>
+    subject.kind === 'viewer-access' && subject.rating.level === floor && subject.clearance !== floor
+      ? [{ kind: 'gate', rule: rid('test-access-gate'), required: floor }]
       : [],
 });
 
@@ -60,14 +82,14 @@ describe('the single policy boundary', () => {
   it('allows everything when no rules are configured — loudly empty, not a fake gate', () => {
     const boundary = createPolicyBoundary([]);
 
-    expect(boundary.decide(textSubject('anything at all'))).toEqual({ allowed: true });
-    expect(boundary.decide(conductSubject('go-live'))).toEqual({ allowed: true });
+    expect(boundary.decide(textSubject('anything at all'))).toEqual({ outcome: 'allowed' });
+    expect(boundary.decide(conductSubject('go-live'))).toEqual({ outcome: 'allowed' });
   });
 
   it('allows a subject no rule objects to', () => {
     const boundary = createPolicyBoundary([bansWord('forbidden')]);
 
-    expect(boundary.decide(textSubject('a perfectly fine bio'))).toEqual({ allowed: true });
+    expect(boundary.decide(textSubject('a perfectly fine bio'))).toEqual({ outcome: 'allowed' });
   });
 
   it('denies with a violation attributed to the rule that raised it', () => {
@@ -76,8 +98,8 @@ describe('the single policy boundary', () => {
     const decision = boundary.decide(textSubject('this is forbidden text'));
 
     expect(decision).toEqual({
-      allowed: false,
-      violations: [{ rule: rid('test-word-ban'), reason: 'text contains "forbidden"' }],
+      outcome: 'denied',
+      violations: [{ kind: 'violation', rule: rid('test-word-ban'), reason: 'text contains "forbidden"' }],
     });
   });
 
@@ -86,8 +108,8 @@ describe('the single policy boundary', () => {
 
     const decision = boundary.decide(textSubject('alpha and beta both here'));
 
-    expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error('unreachable');
+    expect(decision.outcome).toBe('denied');
+    if (decision.outcome !== 'denied') throw new Error('unreachable');
     expect(decision.violations).toHaveLength(2);
     expect(decision.violations.map((v) => v.reason)).toEqual([
       'text contains "alpha"',
@@ -100,8 +122,8 @@ describe('the single policy boundary', () => {
 
     const decision = boundary.decide(textSubject('forbidden'));
 
-    expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error('unreachable');
+    expect(decision.outcome).toBe('denied');
+    if (decision.outcome !== 'denied') throw new Error('unreachable');
     expect(decision.violations).toHaveLength(1);
     expect(decision.violations[0].rule).toBe(rid('test-word-ban'));
   });
@@ -111,15 +133,51 @@ describe('the single policy boundary', () => {
     const boundary = createPolicyBoundary([bansWord('forbidden'), refusesAction('go-live')]);
 
     expect(boundary.decide(textSubject('forbidden'))).toEqual({
-      allowed: false,
-      violations: [{ rule: rid('test-word-ban'), reason: 'text contains "forbidden"' }],
+      outcome: 'denied',
+      violations: [{ kind: 'violation', rule: rid('test-word-ban'), reason: 'text contains "forbidden"' }],
     });
     expect(boundary.decide(conductSubject('go-live'))).toEqual({
-      allowed: false,
-      violations: [{ rule: rid('test-action-refuse'), reason: 'action "go-live" is refused' }],
+      outcome: 'denied',
+      violations: [{ kind: 'violation', rule: rid('test-action-refuse'), reason: 'action "go-live" is refused' }],
     });
     // A conduct action no rule refuses passes; the text rule never fires on it.
-    expect(boundary.decide(conductSubject('post-message'))).toEqual({ allowed: true });
+    expect(boundary.decide(conductSubject('post-message'))).toEqual({ outcome: 'allowed' });
+  });
+
+  it('gates a viewer who falls short of the content standing — allowed-with-standing, not denied', () => {
+    const boundary = createPolicyBoundary([gatesAbove('mature')]);
+
+    const decision = boundary.decide(accessSubject('mature', 'general'));
+
+    expect(decision).toEqual({
+      outcome: 'gated',
+      gates: [{ kind: 'gate', rule: rid('test-access-gate'), required: 'mature' }],
+    });
+  });
+
+  it('allows a viewer who clears the standing — the gate is silent when met', () => {
+    const boundary = createPolicyBoundary([gatesAbove('mature')]);
+
+    expect(boundary.decide(accessSubject('mature', 'mature'))).toEqual({ outcome: 'allowed' });
+  });
+
+  it('lets a deny beat a gate — a violation is more restrictive than a standing', () => {
+    // One rule would gate this access subject; another flatly violates it. The
+    // denial wins, because never-allowed outranks allowed-with-standing.
+    const alwaysViolates: PolicyRule = {
+      id: rid('test-always-deny'),
+      evaluate: (subject): readonly PolicyFinding[] =>
+        subject.kind === 'viewer-access'
+          ? [{ kind: 'violation', rule: rid('test-always-deny'), reason: 'blocked outright' }]
+          : [],
+    };
+    const boundary = createPolicyBoundary([gatesAbove('mature'), alwaysViolates]);
+
+    const decision = boundary.decide(accessSubject('mature', 'general'));
+
+    expect(decision.outcome).toBe('denied');
+    if (decision.outcome !== 'denied') throw new Error('unreachable');
+    expect(decision.violations.map((v) => v.reason)).toEqual(['blocked outright']);
   });
 
   it('is order-independent in its verdict — the rule set is a set, not a sequence', () => {
@@ -130,9 +188,9 @@ describe('the single policy boundary', () => {
     const da = a.decide(subject);
     const db = b.decide(subject);
 
-    expect(da.allowed).toBe(false);
-    expect(db.allowed).toBe(false);
-    if (da.allowed || db.allowed) throw new Error('unreachable');
+    expect(da.outcome).toBe('denied');
+    expect(db.outcome).toBe('denied');
+    if (da.outcome !== 'denied' || db.outcome !== 'denied') throw new Error('unreachable');
     // Same verdict and same set of reasons, regardless of rule order.
     expect(new Set(da.violations.map((v) => v.reason))).toEqual(new Set(db.violations.map((v) => v.reason)));
   });
