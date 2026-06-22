@@ -1,5 +1,3 @@
-import type { CoinAmount } from '@crowdship/std';
-
 import type { DeliverableAccepted, GoalResolved, PoolTargetReached } from './condition.js';
 
 /**
@@ -16,8 +14,12 @@ import type { DeliverableAccepted, GoalResolved, PoolTargetReached } from './con
  * defined once, in `condition.ts`, and cannot drift [LAW:one-source-of-truth].
  */
 export interface PoolObservation extends PoolTargetReached {
-  /** Coins pooled against the obligation as of this reading. */
-  readonly pooled: CoinAmount;
+  /** Coins pooled against the obligation as of this reading — a ledger BALANCE, not a
+   *  movement amount. A balance may sit at zero or anywhere below the target (the whole
+   *  point of observing is to judge the not-yet-met case), so it is the ledger's raw
+   *  `bigint` reading, never a strictly-positive `CoinAmount` that cannot represent an
+   *  empty pool [LAW:types-are-the-program]. */
+  readonly pooled: bigint;
 }
 
 export interface DeliverableObservation extends DeliverableAccepted {
@@ -34,7 +36,7 @@ export type Observation = PoolObservation | DeliverableObservation | GoalObserva
  *  ties one criterion to the one reading it can be judged by, so a goal's resolution handed
  *  to a pool target does not typecheck — the engine gets the cross-kind mismatch caught for
  *  free where it already branches per kind to observe. */
-export const observePool = (condition: PoolTargetReached, pooled: CoinAmount): PoolObservation => ({
+export const observePool = (condition: PoolTargetReached, pooled: bigint): PoolObservation => ({
   ...condition,
   pooled,
 });

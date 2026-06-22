@@ -132,6 +132,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/menu
 
+  services/release:
+    dependencies:
+      '@crowdship/ledger':
+        specifier: workspace:*
+        version: link:../../packages/ledger
+      '@crowdship/ledger-kernel':
+        specifier: workspace:*
+        version: link:../../packages/ledger-kernel
+      '@crowdship/settlement':
+        specifier: workspace:*
+        version: link:../../packages/settlement
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../../packages/std
+
 packages:
 
   '@alloc/quick-lru@5.2.0':
