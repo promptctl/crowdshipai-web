@@ -1,6 +1,7 @@
 import type { Timestamp } from '@crowdship/std';
 import type { Account } from './account.js';
 import type { AccountId, Email, RecoveryToken, SessionToken } from './ids.js';
+import type { RoleSet } from './roles.js';
 import type { Session } from './session.js';
 
 /**
@@ -47,6 +48,15 @@ export interface AuthStore {
   insertAccount(account: Account): Promise<void>;
   accountByEmail(email: Email): Promise<Account | undefined>;
   accountById(id: AccountId): Promise<Account | undefined>;
+  /**
+   * Replace an account's capabilities. A deliberately narrow seam — `roles` is
+   * the one mutable axis of an account, so the store exposes updating *only* it,
+   * never a general account overwrite that could silently mutate the email or
+   * creation time [LAW:locality-or-seam]. Updating the roles of an account that
+   * does not exist is the caller's precondition to check (the service does);
+   * a store MAY no-op or backstop, never silently create one.
+   */
+  updateRoles(id: AccountId, roles: RoleSet): Promise<void>;
 
   putSession(token: SessionToken, session: Session): Promise<void>;
   sessionByToken(token: SessionToken): Promise<Session | undefined>;
@@ -89,6 +99,14 @@ export class InMemoryAuthStore implements AuthStore {
 
   accountById(id: AccountId): Promise<Account | undefined> {
     return Promise.resolve(this.#accounts.get(id));
+  }
+
+  updateRoles(id: AccountId, roles: RoleSet): Promise<void> {
+    const account = this.#accounts.get(id);
+    // The service has already established the account exists; a missing one here
+    // is a no-op rather than a silently-minted account [LAW:no-silent-failure].
+    if (account !== undefined) this.#accounts.set(id, { ...account, roles });
+    return Promise.resolve();
   }
 
   putSession(token: SessionToken, session: Session): Promise<void> {

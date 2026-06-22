@@ -1,6 +1,6 @@
 import type { Result } from '@crowdship/std';
 import type { Account } from './account.js';
-import type { SignUpError, LogInError, SessionError, ResetError } from './errors.js';
+import type { SignUpError, LogInError, SessionError, ResetError, RoleChangeError } from './errors.js';
 import type {
   AccountId,
   Email,
@@ -9,6 +9,7 @@ import type {
   SessionId,
   SessionToken,
 } from './ids.js';
+import type { Role } from './roles.js';
 import type { Authenticated, Session } from './session.js';
 
 /**
@@ -117,4 +118,17 @@ export interface AuthService {
    * longer authenticates.
    */
   resetCredential(token: RecoveryToken, newSecret: Secret): Promise<Result<void, ResetError>>;
+
+  /**
+   * Grant a capability to an account, returning the account with its updated
+   * roles. Idempotent: granting a role the account already holds succeeds and
+   * leaves the role set unchanged. This is how building and recruiting are
+   * opted into after signup — the data model says capabilities, so they must be
+   * able to change [LAW:one-type-per-behavior]; authorization (who is allowed to
+   * grant) is the single auth gate's concern (bb2.5), not this lifecycle call.
+   */
+  grantRole(accountId: AccountId, role: Role): Promise<Result<Account, RoleChangeError>>;
+
+  /** Revoke a capability, returning the updated account. Idempotent: revoking a role not held succeeds unchanged. */
+  revokeRole(accountId: AccountId, role: Role): Promise<Result<Account, RoleChangeError>>;
 }

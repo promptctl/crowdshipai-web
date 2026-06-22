@@ -9,6 +9,18 @@ export type { Account } from './account.js';
 export type { Session, Authenticated } from './session.js';
 export { isExpired } from './session.js';
 
+export type { Role, RoleSet, RoleError } from './roles.js';
+export {
+  ROLES,
+  DEFAULT_ROLES,
+  NO_ROLES,
+  role,
+  roleSet,
+  hasRole,
+  withRole,
+  withoutRole,
+} from './roles.js';
+
 export type {
   AccountId,
   SessionId,
@@ -22,7 +34,7 @@ export type {
 } from './ids.js';
 export { accountId, sessionId, sessionToken, recoveryToken, secret, email } from './ids.js';
 
-export type { SignUpError, LogInError, SessionError, ResetError } from './errors.js';
+export type { SignUpError, LogInError, SessionError, ResetError, RoleChangeError } from './errors.js';
 
 export type {
   AuthService,

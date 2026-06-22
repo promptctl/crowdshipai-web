@@ -350,3 +350,49 @@ describe('recovery', () => {
     });
   });
 });
+
+describe('roles are capability data on the one account', () => {
+  test('a fresh account starts with the default capabilities (backer)', async () => {
+    const { service } = makeService();
+    const created = must(await service.signUp(anEmail('new@ex.com'), aSecret('pw')));
+    expect(created.roles).toEqual(['backer']);
+  });
+
+  test('one account can hold all three capabilities at once — not three user types', async () => {
+    const { service } = makeService();
+    const e = anEmail('triple@ex.com');
+    const created = must(await service.signUp(e, aSecret('pw')));
+    must(await service.grantRole(created.id, 'builder'));
+    const both = must(await service.grantRole(created.id, 'recruiter'));
+    expect(both.roles).toEqual(['backer', 'builder', 'recruiter']);
+  });
+
+  test('granting a capability is reflected when the session is next resolved', async () => {
+    const { service } = makeService();
+    const e = anEmail('promote@ex.com');
+    const created = must(await service.signUp(e, aSecret('pw')));
+    must(await service.grantRole(created.id, 'builder'));
+    const grant = must(await service.logIn(e, aSecret('pw')));
+    const who = must(await service.resolveSession(grant.token));
+    expect(who.account.roles).toEqual(['backer', 'builder']);
+  });
+
+  test('revoking removes the capability; grant and revoke are idempotent', async () => {
+    const { service } = makeService();
+    const created = must(await service.signUp(anEmail('toggle@ex.com'), aSecret('pw')));
+    const granted = must(await service.grantRole(created.id, 'builder'));
+    // Granting the same role again leaves the set unchanged.
+    expect((must(await service.grantRole(created.id, 'builder'))).roles).toEqual(granted.roles);
+    const revoked = must(await service.revokeRole(created.id, 'builder'));
+    expect(revoked.roles).toEqual(['backer']);
+    // Revoking it again is still success, still unchanged.
+    expect((must(await service.revokeRole(created.id, 'builder'))).roles).toEqual(['backer']);
+  });
+
+  test('granting or revoking a role on an unknown account is a named failure, not a silent mint', async () => {
+    const { service } = makeService();
+    const ghost = must(accountId('no-such-account'));
+    expect(await service.grantRole(ghost, 'builder')).toEqual({ ok: false, error: { kind: 'no-such-account' } });
+    expect(await service.revokeRole(ghost, 'builder')).toEqual({ ok: false, error: { kind: 'no-such-account' } });
+  });
+});
