@@ -48,8 +48,24 @@ export const sessionToken = (raw: string): Result<SessionToken, BlankError> =>
   nonBlank<'SessionToken'>('sessionToken', raw);
 export const recoveryToken = (raw: string): Result<RecoveryToken, BlankError> =>
   nonBlank<'RecoveryToken'>('recoveryToken', raw);
-export const secret = (raw: string): Result<Secret, BlankError> =>
-  nonBlank<'Secret'>('secret', raw);
+
+export type SecretError = BlankError | { readonly kind: 'too-long'; readonly max: number };
+
+/**
+ * No legitimate credential approaches this length; the cap is a trust-boundary
+ * rejection of input whose only purpose is to feed an oversized buffer to the
+ * KDF and amplify CPU cost [LAW:single-enforcer]. Enforced HERE, at the one
+ * constructor that mints a `Secret`, so no downstream code must re-check it.
+ */
+const MAX_SECRET_LENGTH = 1024;
+
+export const secret = (raw: string): Result<Secret, SecretError> => {
+  // The value is preserved untrimmed — leading/trailing spaces are legitimate in
+  // a password; only an all-whitespace value is blank.
+  if (raw.trim().length === 0) return err({ kind: 'blank', label: 'secret' });
+  if (raw.length > MAX_SECRET_LENGTH) return err({ kind: 'too-long', max: MAX_SECRET_LENGTH });
+  return ok(raw as Secret);
+};
 
 export type EmailError =
   | { readonly kind: 'blank' }

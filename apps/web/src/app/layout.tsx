@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { AuthNav } from '@/components/AuthNav';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -27,12 +28,13 @@ export default function RootLayout({ children }: { readonly children: React.Reac
               >
                 browse
               </Link>
-              <button
-                type="button"
+              <AuthNav />
+              <Link
+                href="/account"
                 className="rounded-full border border-accent-dim bg-accent/10 px-3 py-1.5 font-semibold text-accent transition-colors hover:bg-accent hover:text-ink"
               >
                 go live
-              </button>
+              </Link>
             </nav>
           </div>
         </header>

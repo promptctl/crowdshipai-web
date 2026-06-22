@@ -196,6 +196,57 @@ describe('login failure never enumerates accounts', () => {
     expect(wrongSecret).toEqual({ ok: false, error: { kind: 'invalid-credentials' } });
     expect(noAccount).toEqual(wrongSecret);
   });
+
+  test('a login for an unknown email STILL performs a verification (no timing oracle)', async () => {
+    // The response value already hides which emails are registered; this pins the
+    // other half — that a missing mailbox runs the same credential verification as
+    // a wrong secret, so the two cannot be told apart by latency either. We assert
+    // the behavior (verify is called) rather than a flaky wall-clock measurement.
+    const verifiedIds: AccountId[] = [];
+    class SpyCredentials implements CredentialStore {
+      readonly #inner = new PlaintextCredentials();
+      set(id: AccountId, s: Secret): Promise<void> {
+        return this.#inner.set(id, s);
+      }
+      verify(id: AccountId, s: Secret): Promise<boolean> {
+        verifiedIds.push(id);
+        return this.#inner.verify(id, s);
+      }
+      clear(id: AccountId): Promise<void> {
+        return this.#inner.clear(id);
+      }
+    }
+    const mint = new CountingMint();
+    const service = new InMemoryAuthService({
+      clock: new TestClock(),
+      ids: mint,
+      secrets: mint,
+      credentials: new SpyCredentials(),
+      delivery: new CapturingDelivery(),
+      sessionTtlMillis: SESSION_TTL,
+      recoveryTtlMillis: RECOVERY_TTL,
+    });
+    const res = await service.logIn(anEmail('ghost@ex.com'), aSecret('whatever'));
+    expect(res).toEqual({ ok: false, error: { kind: 'invalid-credentials' } });
+    expect(verifiedIds).toHaveLength(1); // a verify ran even though no account exists
+  });
+});
+
+describe('secret constructor bounds (the credential trust boundary)', () => {
+  test('an all-whitespace secret is blank', () => {
+    expect(secret('   ').ok).toBe(false);
+  });
+
+  test('leading/trailing spaces are preserved — legitimate in a password', () => {
+    expect(must(secret(' pw '))).toBe(' pw ');
+  });
+
+  test('a bounded secret is accepted; an over-long one is rejected as too-long', () => {
+    expect(secret('x'.repeat(1024)).ok).toBe(true);
+    const tooLong = secret('x'.repeat(1025));
+    expect(tooLong.ok).toBe(false);
+    if (!tooLong.ok) expect(tooLong.error.kind).toBe('too-long');
+  });
 });
 
 describe('sessions are lifetime-as-data', () => {

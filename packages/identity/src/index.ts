@@ -18,6 +18,7 @@ export type {
   Email,
   BlankError,
   EmailError,
+  SecretError,
 } from './ids.js';
 export { accountId, sessionId, sessionToken, recoveryToken, secret, email } from './ids.js';
 
@@ -32,5 +33,8 @@ export type {
   RecoveryDelivery,
 } from './service.js';
 
-export type { InMemoryAuthDeps } from './in-memory.js';
-export { InMemoryAuthService } from './in-memory.js';
+export type { AuthStore, Recovery } from './store.js';
+export { InMemoryAuthStore } from './store.js';
+
+export type { AuthServiceDeps, InMemoryAuthDeps } from './standard-service.js';
+export { StandardAuthService, InMemoryAuthService } from './standard-service.js';
