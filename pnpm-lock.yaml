@@ -29,6 +29,9 @@ importers:
       '@crowdship/identity-node':
         specifier: workspace:*
         version: link:../../packages/identity-node
+      '@crowdship/moderation':
+        specifier: workspace:*
+        version: link:../../packages/moderation
       '@crowdship/rate-limit':
         specifier: workspace:*
         version: link:../../packages/rate-limit
@@ -104,6 +107,12 @@ importers:
         version: link:../std
 
   packages/menu:
+    dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+
+  packages/moderation:
     dependencies:
       '@crowdship/std':
         specifier: workspace:*
