@@ -54,6 +54,20 @@ export { StandardChannelService } from './channel-service.js';
 export type { Principal } from './authz.js';
 export { mayManageChannel, isPlatformStaff, maySetVerification } from './authz.js';
 
+/**
+ * Conduct enforcement (o97.5): bans and suspensions recorded against the account so
+ * they survive channel and session churn. A {@link Sanction} is expressed by its
+ * EFFECT — permanent, or until an instant — not a closed label set; the governing bar
+ * is DERIVED from an account's sanctions via {@link effectiveSanction}, never stored
+ * twice. The conduct PolicyRule that reads the resulting standing lives in
+ * `@crowdship/moderation`; the app maps a governing sanction onto its `ActorStanding`
+ * at the one composition point, the same way it maps a principal onto an `ActorRef`.
+ */
+export type { Sanction, SanctionScope } from './sanction.js';
+export { effectiveSanction } from './sanction.js';
+export type { SanctionStore } from './sanction-store.js';
+export { InMemorySanctionStore } from './sanction-store.js';
+
 export type { Role, RoleSet, RoleError } from './roles.js';
 export {
   ROLES,

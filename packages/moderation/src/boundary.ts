@@ -1,5 +1,6 @@
 import type { ActorRef, ConductAction, PolicyRuleId, PublishedSurface } from './ids.js';
 import type { MaturityLevel, MaturityRating } from './maturity.js';
+import type { ActorStanding } from './standing.js';
 
 /**
  * The thing a policy decision is ABOUT — discriminated by `kind`, seeded along the
@@ -30,6 +31,16 @@ export type PolicySubject =
       readonly kind: 'actor-conduct';
       readonly actor: ActorRef;
       readonly action: ConductAction;
+      /**
+       * Where the actor stands with the platform — the fact the conduct rule (o97.5)
+       * judges. It is a world-fact derived at the edge from the actor's enforcement
+       * record in identity and handed in, so the boundary stays pure and never reaches
+       * a sibling core [LAW:effects-at-boundaries] [LAW:one-way-deps]. Required, never
+       * optional: an actor always HAS a standing, and an unknown one is the edge's to
+       * resolve to {@link IN_GOOD_STANDING} (the baseline), never a missing field the
+       * rule must defend against [LAW:no-defensive-null-guards].
+       */
+      readonly standing: ActorStanding;
     }
   | {
       /** A viewer asking to see rated content — the access axis. The age gate

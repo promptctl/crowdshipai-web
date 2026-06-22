@@ -5,6 +5,7 @@ import {
   actorRef,
   conductAction,
   createPolicyBoundary,
+  IN_GOOD_STANDING,
   maturityRating,
   policyRuleId,
   publishedSurface,
@@ -38,6 +39,7 @@ const conductSubject = (action: string): PolicySubject => ({
   kind: 'actor-conduct',
   actor: actor('builder-1'),
   action: must(conductAction(action)),
+  standing: IN_GOOD_STANDING,
 });
 
 const accessSubject = (level: MaturityLevel, clearance: MaturityLevel): PolicySubject => ({

@@ -24,6 +24,18 @@ export { createPolicyBoundary } from './boundary.js';
 export { createMaturityGateRule } from './maturity-gate.js';
 
 /**
+ * Conduct enforcement (o97.5): an actor `barred` from acting is denied at the one
+ * boundary, with the bar's reason. {@link ActorStanding} is the world-fact the rule
+ * reads — identity owns the enforcement record, the app collapses it to a standing at
+ * the edge and hands it in, the rule stays pure. What an upheld review DOES (issue a
+ * ban/suspension) lives in identity; this is only the rule that reads the resulting
+ * standing.
+ */
+export type { ActorStanding } from './standing.js';
+export { IN_GOOD_STANDING } from './standing.js';
+export { createConductRule } from './conduct-rule.js';
+
+/**
  * The moderation pipeline (o97.4): report, review, action — all recorded to one
  * append-only {@link AuditTrail}, the system of record. The trail is the single
  * source of truth for moderation history; the review queue and the incident
