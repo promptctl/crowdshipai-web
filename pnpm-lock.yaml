@@ -166,6 +166,28 @@ importers:
         specifier: workspace:*
         version: link:../../packages/std
 
+  services/settlement-feed:
+    dependencies:
+      '@crowdship/ledger':
+        specifier: workspace:*
+        version: link:../../packages/ledger
+      '@crowdship/ledger-kernel':
+        specifier: workspace:*
+        version: link:../../packages/ledger-kernel
+    devDependencies:
+      '@crowdship/pool':
+        specifier: workspace:*
+        version: link:../pool
+      '@crowdship/release':
+        specifier: workspace:*
+        version: link:../release
+      '@crowdship/settlement':
+        specifier: workspace:*
+        version: link:../../packages/settlement
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../../packages/std
+
 packages:
 
   '@alloc/quick-lru@5.2.0':
