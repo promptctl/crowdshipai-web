@@ -1,7 +1,11 @@
 'use server';
 
+import { headers } from 'next/headers';
+
 import { email, secret } from '@crowdship/identity';
+import { enforceAuthRateLimit } from './auth-rate-limit';
 import { AuthError, signIn } from './auth';
+import { clientIp } from './client-ip';
 import { getAuthService } from './identity';
 
 /** What an auth form gets back: nothing on success (the action redirects), or one message to show. */
@@ -22,14 +26,34 @@ export async function signUpAction(_prev: AuthFormState, formData: FormData): Pr
   if (!e.ok) return { error: 'Enter a valid email address.' };
   if (!s.ok) return { error: 'Choose a password.' };
 
+  // Throttle BEFORE signUp's ~134MB scrypt mint. Signup owns its own flow (unlike
+  // login, which throttles inside `authorize`), so it can surface the limit plainly
+  // — consistent with signup's existing choice to disclose rather than stay opaque.
+  const gate = enforceAuthRateLimit({ ip: clientIp(await headers()), email: e.value });
+  if (!gate.allowed) {
+    const retryAfterSeconds = Math.ceil(gate.retryAfterMillis / 1000);
+    return { error: `Too many attempts. Please wait ${retryAfterSeconds}s and try again.` };
+  }
+
   const created = await getAuthService().signUp(e.value, s.value);
   if (!created.ok) return { error: 'That email is already registered — try logging in.' };
 
-  // Auto-login. On success `signIn` throws the redirect (NEXT_REDIRECT), which
-  // must propagate — so it is deliberately NOT wrapped here. A failure right after
-  // a successful signup is a real fault and should surface loudly [LAW:no-silent-failure].
-  await signIn('credentials', { email: e.value, password: s.value, redirectTo: '/account' });
-  return {};
+  // Auto-login is the CONTINUATION of an already-admitted signup, but it re-enters
+  // `authorize` and is therefore throttled a second time (the one structural cost
+  // of routing through NextAuth). After a fresh signUp the credentials are valid
+  // and parse cleanly, so the only way `authorize` returns null here is the rate
+  // limiter tripping mid-flow — surfacing as an AuthError, never the success
+  // redirect (NEXT_REDIRECT) and never a real credential fault. The account is
+  // already durably created, so a throttled auto-login is expected backpressure,
+  // not a fault to crash on: tell the user to log in. The success redirect and any
+  // non-AuthError fault still propagate untouched and loudly [LAW:no-silent-failure].
+  try {
+    await signIn('credentials', { email: e.value, password: s.value, redirectTo: '/account' });
+    return {};
+  } catch (error) {
+    if (error instanceof AuthError) return { error: 'Account created — please log in to continue.' };
+    throw error;
+  }
 }
 
 /**
