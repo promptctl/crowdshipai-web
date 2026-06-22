@@ -70,6 +70,15 @@ export const openIdentityDb = (location: string): DatabaseSync => {
       verification TEXT    NOT NULL DEFAULT 'none',
       created_at   INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS sanctions (
+      seq        INTEGER PRIMARY KEY,
+      account_id TEXT    NOT NULL,
+      reason     TEXT    NOT NULL,
+      issued_at  INTEGER NOT NULL,
+      scope_kind TEXT    NOT NULL,
+      until      INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS sanctions_by_account ON sanctions (account_id);
   `);
   migrateAddRolesColumn(db);
   migrateAddVerificationColumn(db);

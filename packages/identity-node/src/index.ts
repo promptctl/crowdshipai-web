@@ -16,3 +16,4 @@ export { openIdentityDb } from './identity-db.js';
 export { SqliteAuthStore } from './sqlite-auth-store.js';
 export { SqliteCredentialStore } from './sqlite-credentials.js';
 export { SqliteChannelStore } from './sqlite-channel-store.js';
+export { SqliteSanctionStore } from './sqlite-sanction-store.js';
