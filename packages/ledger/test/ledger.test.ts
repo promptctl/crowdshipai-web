@@ -7,6 +7,7 @@ import {
   idempotencyKey,
   netEffect,
   timestamp,
+  transaction,
   transactionId,
   transactionReason,
   transfer,
@@ -14,6 +15,7 @@ import {
   type AccountId,
   type AccountKind,
   type CoinAmount,
+  type IdempotencyKey,
   type Result,
   type Transaction,
   type Transfer,
@@ -30,7 +32,13 @@ const acc = (s: string): AccountId => must(accountId(s));
 const coins = (n: bigint): CoinAmount => must(coinAmount(n));
 const account = (id: string, kind: AccountKind): Account => ({ id: acc(id), kind });
 const reason = must(transactionReason('test'));
-const key = must(idempotencyKey('key'));
+const key = (s: string): IdempotencyKey => must(idempotencyKey(s));
+
+// Each post is a distinct operation unless a test deliberately reuses a key, so
+// the default key is unique per call — sharing one would make every post a replay
+// of the first under the new idempotent boundary.
+let keyCounter = 0;
+const freshKey = (): IdempotencyKey => key(`k-${(keyCounter += 1)}`);
 
 /** A ledger with deterministic capabilities: a counter id source and a counter
  *  clock, so every test is reproducible and the boundary's supplied id/timestamp
@@ -46,10 +54,15 @@ const deterministicLedger = (): { ledger: Ledger; store: InMemoryLedgerStore } =
   return { ledger, store };
 };
 
-const tx = (from: string, to: string, amount: bigint): { transfers: readonly Transfer[]; reason: typeof reason; idempotencyKey: typeof key } => ({
+const tx = (
+  from: string,
+  to: string,
+  amount: bigint,
+  idempotencyKey: IdempotencyKey = freshKey(),
+): { transfers: readonly Transfer[]; reason: typeof reason; idempotencyKey: IdempotencyKey } => ({
   transfers: [must(transfer(acc(from), acc(to), coins(amount)))],
   reason,
-  idempotencyKey: key,
+  idempotencyKey,
 });
 
 const sumOf = (m: ReadonlyMap<AccountId, bigint>): bigint =>
@@ -123,7 +136,7 @@ describe('the boundary refuses illegal posts as values and never appends them', 
 
   test('an empty transaction is rejected by the constructor before anything is recorded', async () => {
     const { ledger } = deterministicLedger();
-    const result = await ledger.post({ transfers: [], reason, idempotencyKey: key });
+    const result = await ledger.post({ transfers: [], reason, idempotencyKey: freshKey() });
     expect(result).toEqual({ ok: false, error: { kind: 'no-transfers' } });
     expect(await ledger.history()).toHaveLength(0);
   });
@@ -234,7 +247,7 @@ describe('the headline settlement shapes post atomically and conserve', () => {
           must(transfer(acc('backer'), acc('platform'), coins(5n))),
         ],
         reason,
-        idempotencyKey: key,
+        idempotencyKey: freshKey(),
       }),
     );
 
@@ -317,5 +330,148 @@ describe('createLedger wires production capabilities', () => {
     const b = must(await ledger.post(tx('mint', 'alice', 1n)));
     expect(a.transaction.id).not.toBe(b.transaction.id);
     expect(a.transaction.occurredAt).toBeGreaterThan(0);
+  });
+});
+
+describe('the boundary is idempotent on the request key — a retry can never double-spend', () => {
+  test('re-posting the same operation under the same key returns the original receipt and records nothing new', async () => {
+    const { ledger } = deterministicLedger();
+    await ledger.openAccount(account('mint', 'mint'));
+    await ledger.openAccount(account('alice', 'user-wallet'));
+
+    const k = key('mint-alice-once');
+    const first = must(await ledger.post(tx('mint', 'alice', 500n, k)));
+    const retry = must(await ledger.post(tx('mint', 'alice', 500n, k)));
+
+    // The retry is the original, byte-for-byte: same id, same point-in-time balances.
+    expect(retry.transaction.id).toBe(first.transaction.id);
+    expect(retry.transaction.occurredAt).toBe(first.transaction.occurredAt);
+    expect(retry.balances.get(acc('alice'))).toBe(500n);
+    expect(retry.balances.get(acc('mint'))).toBe(-500n);
+
+    // Exactly one movement recorded, and alice was funded once, not twice.
+    expect(await ledger.history()).toHaveLength(1);
+    expect((await ledger.balances()).get(acc('alice'))).toBe(500n);
+  });
+
+  test('many concurrent retries of one key let exactly one movement through; all share the same receipt', async () => {
+    const { ledger } = deterministicLedger();
+    await ledger.openAccount(account('mint', 'mint'));
+    await ledger.openAccount(account('alice', 'user-wallet'));
+
+    const k = key('the-one-purchase');
+    // Fire 100 identical posts at once. If the dedup check could interleave with
+    // the append, more than one would miss the prior and record a duplicate —
+    // double-spend. The serialized critical section must let exactly one append.
+    const attempts = Array.from({ length: 100 }, () => ledger.post(tx('mint', 'alice', 10n, k)));
+    const results = await Promise.all(attempts);
+
+    for (const r of results) expect(r.ok).toBe(true);
+    const ids = new Set(results.map((r) => (r.ok ? r.value.transaction.id : 'err')));
+    expect(ids.size).toBe(1); // every caller saw the same single transaction
+
+    expect(await ledger.history()).toHaveLength(1);
+    expect((await ledger.balances()).get(acc('alice'))).toBe(10n); // funded once, not 100×
+    expect((await ledger.balances()).get(acc('mint'))).toBe(-10n);
+  });
+
+  test('a replay is referentially transparent: its balances stay point-in-time even after later activity', async () => {
+    const { ledger } = deterministicLedger();
+    await ledger.openAccount(account('mint', 'mint'));
+    await ledger.openAccount(account('alice', 'user-wallet'));
+
+    const k = key('first-mint');
+    must(await ledger.post(tx('mint', 'alice', 100n, k))); // alice: 100
+    must(await ledger.post(tx('mint', 'alice', 50n))); // distinct op, alice now 150
+
+    const replay = must(await ledger.post(tx('mint', 'alice', 100n, k)));
+    // The receipt reflects the balances as of the original post (100), not now (150).
+    expect(replay.balances.get(acc('alice'))).toBe(100n);
+    expect(replay.balances.get(acc('mint'))).toBe(-100n);
+    expect((await ledger.balances()).get(acc('alice'))).toBe(150n); // current is unchanged by the replay
+    expect(await ledger.history()).toHaveLength(2); // the replay added nothing
+  });
+
+  test('reusing a key for a different operation is refused loudly as a value, and records nothing', async () => {
+    const { ledger } = deterministicLedger();
+    await ledger.openAccount(account('mint', 'mint'));
+    await ledger.openAccount(account('alice', 'user-wallet'));
+
+    const k = key('spent-key');
+    const first = must(await ledger.post(tx('mint', 'alice', 100n, k)));
+    const conflict = await ledger.post(tx('mint', 'alice', 999n, k)); // same key, different amount
+
+    expect(conflict).toEqual({
+      ok: false,
+      error: {
+        kind: 'idempotency-key-reused',
+        key: k,
+        recordedTransactionId: first.transaction.id,
+      },
+    });
+    // The conflicting movement was never recorded; alice keeps her original 100.
+    expect(await ledger.history()).toHaveLength(1);
+    expect((await ledger.balances()).get(acc('alice'))).toBe(100n);
+  });
+
+  test('the same operation under two different keys posts twice — dedup is by key, not by content', async () => {
+    const { ledger } = deterministicLedger();
+    await ledger.openAccount(account('mint', 'mint'));
+    await ledger.openAccount(account('alice', 'user-wallet'));
+
+    const a = must(await ledger.post(tx('mint', 'alice', 10n, key('buy-1'))));
+    const b = must(await ledger.post(tx('mint', 'alice', 10n, key('buy-2'))));
+
+    expect(a.transaction.id).not.toBe(b.transaction.id);
+    expect(await ledger.history()).toHaveLength(2);
+    expect((await ledger.balances()).get(acc('alice'))).toBe(20n);
+  });
+
+  test('posting one key any number of times records it exactly once and returns one stable receipt', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 1, max: 25 }), async (retries) => {
+        const { ledger } = deterministicLedger();
+        await ledger.openAccount(account('mint', 'mint'));
+        await ledger.openAccount(account('alice', 'user-wallet'));
+
+        const k = key('property-key');
+        const receipts = [];
+        for (let i = 0; i < retries; i += 1) {
+          receipts.push(must(await ledger.post(tx('mint', 'alice', 7n, k))));
+        }
+
+        const oneId = receipts[0]?.transaction.id;
+        const allSame = receipts.every((r) => r.transaction.id === oneId);
+        const history = await ledger.history();
+        const aliceBalance = (await ledger.balances()).get(acc('alice'));
+        return allSame && history.length === 1 && aliceBalance === 7n;
+      }),
+    );
+  });
+});
+
+describe('the store guards the at-most-one-transaction-per-key invariant of the log', () => {
+  test('appending a second transaction under a key already in the log is corruption and halts loudly', async () => {
+    const store = new InMemoryLedgerStore();
+    const sharedKey = key('shared');
+    const build = (id: string): Transaction => {
+      const t = transaction({
+        id: must(transactionId(id)),
+        reason,
+        transfers: [must(transfer(acc('mint'), acc('alice'), coins(1n)))],
+        occurredAt: must(timestamp(1)),
+        idempotencyKey: sharedKey,
+      });
+      return must(t);
+    };
+
+    await store.append(build('txn-a'));
+    // A different transaction id but the same key — only reachable if the boundary
+    // dedup were bypassed; the store refuses it rather than holding two postings
+    // under one key. The guard halts before mutating (it throws as the boundary's
+    // `await this.store.append(...)` would surface a rejection), so the log is left
+    // with just the first transaction.
+    expect(() => store.append(build('txn-b'))).toThrow(/corruption.*idempotency key/);
+    expect(await store.history()).toHaveLength(1);
   });
 });

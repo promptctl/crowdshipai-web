@@ -2,6 +2,7 @@ import type {
   Account,
   AccountId,
   AccountKind,
+  IdempotencyKey,
   Transaction,
   TransactionId,
 } from '@crowdship/ledger-kernel';
@@ -38,9 +39,12 @@ export type AccountConflict = {
  * not guard its own read-modify-write [LAW:no-ambient-temporal-coupling]. A
  * caller using this interface directly must uphold that precondition.
  *
- * `append` rejects (never returns) if asked to record a transaction id already
- * in the log: that is corruption of the one authoritative record, halted loudly
- * rather than double-posted [LAW:no-silent-failure].
+ * `append` rejects (never returns) if asked to record a transaction id — or an
+ * idempotency key — already in the log: each is corruption of the one
+ * authoritative record (a double-post that bypassed the boundary's dedup), halted
+ * loudly rather than recorded [LAW:no-silent-failure]. The log therefore holds at
+ * most one transaction per idempotency key, which is what makes
+ * {@link findByIdempotencyKey} a total lookup.
  */
 export interface LedgerStore {
   openAccount(account: Account): Promise<Result<void, AccountConflict>>;
@@ -49,6 +53,14 @@ export interface LedgerStore {
   append(txn: Transaction): Promise<void>;
   history(): Promise<readonly Transaction[]>;
   balances(): Promise<ReadonlyMap<AccountId, bigint>>;
+  /** The transaction already recorded under this idempotency key, if any — the
+   *  seam the idempotent boundary reads to replay a retry instead of double-
+   *  posting. A pure lookup into the authoritative log: it returns only the
+   *  recorded transaction, never derived balances, so every engine behind this
+   *  seam (a durable store, TigerBeetle's native idempotency) implements a lookup
+   *  and nothing more — the receipt's balances are derived above the seam by the
+   *  one domain function {@link resultingBalances} [LAW:locality-or-seam]. */
+  findByIdempotencyKey(key: IdempotencyKey): Promise<Transaction | undefined>;
 }
 
 /**
@@ -66,6 +78,10 @@ export class InMemoryLedgerStore implements LedgerStore {
   readonly #registry = new Map<AccountId, AccountKind>();
   readonly #log: Transaction[] = [];
   readonly #ids = new Set<TransactionId>();
+  // Derived index over the log: idempotency key -> the one transaction that holds
+  // it. Rebuildable by replaying the log (exactly like #ids), so it is not a
+  // second source of truth — just a fast lookup into the authoritative record.
+  readonly #byKey = new Map<IdempotencyKey, Transaction>();
 
   openAccount(account: Account): Promise<Result<void, AccountConflict>> {
     const existing = this.#registry.get(account.id);
@@ -87,17 +103,27 @@ export class InMemoryLedgerStore implements LedgerStore {
   }
 
   append(txn: Transaction): Promise<void> {
-    // A re-appended transaction id would mean the same coin movement recorded
-    // twice — corruption of the one authoritative record, not a domain outcome a
-    // caller chooses to handle. Generated ids are unique, so this is unreachable
-    // in practice; if it ever fires we halt loudly rather than double-post
+    // A re-appended transaction id, or a re-used idempotency key, would each mean
+    // the same coin movement recorded twice — corruption of the one authoritative
+    // record, not a domain outcome a caller chooses to handle. The boundary gates
+    // both away before reaching here, so neither is reachable in correct
+    // operation; if either fires we halt loudly rather than double-post, and
+    // before mutating anything so a rejected append leaves the log untouched
     // [LAW:no-silent-failure].
     if (this.#ids.has(txn.id)) {
       throw new Error(`ledger corruption: transaction id already in log: ${txn.id}`);
     }
+    if (this.#byKey.has(txn.idempotencyKey)) {
+      throw new Error(`ledger corruption: idempotency key already in log: ${txn.idempotencyKey}`);
+    }
     this.#ids.add(txn.id);
+    this.#byKey.set(txn.idempotencyKey, txn);
     this.#log.push(txn);
     return Promise.resolve();
+  }
+
+  findByIdempotencyKey(key: IdempotencyKey): Promise<Transaction | undefined> {
+    return Promise.resolve(this.#byKey.get(key));
   }
 
   history(): Promise<readonly Transaction[]> {

@@ -10,9 +10,11 @@ import type {
   Transfer,
   TransactionError,
 } from '@crowdship/ledger-kernel';
-import { ok, timestamp, transaction, transactionId } from '@crowdship/ledger-kernel';
+import { err, ok, timestamp, transaction, transactionId } from '@crowdship/ledger-kernel';
 import type { Result } from '@crowdship/ledger-kernel';
 
+import { resultingBalances } from './balances.js';
+import { decideIdempotency, type IdempotencyConflict } from './idempotency.js';
 import { decidePosting, type LedgerView, type PostingRejection } from './posting.js';
 import { InMemoryLedgerStore, type AccountConflict, type LedgerStore } from './store.js';
 
@@ -27,8 +29,9 @@ export type TransactionIdSource = () => TransactionId;
 /** What a caller asks the ledger to record: the balanced transfers, why they
  *  moved, and the idempotency key carried into the transaction. The id and the
  *  occurred-at moment are supplied by the boundary, never by the caller. The key
- *  is recorded for the idempotent boundary (ledger ticket .3); this write path
- *  does not yet deduplicate on it. */
+ *  makes the post idempotent: re-sending the same request under the same key
+ *  returns the original receipt instead of recording a second movement, so a
+ *  retry can never double-spend. */
 export interface PostRequest {
   readonly transfers: readonly Transfer[];
   readonly reason: TransactionReason;
@@ -43,13 +46,15 @@ export interface PostReceipt {
 }
 
 /** Every way a post can fail *as a domain outcome*, as one closed union of
- *  values the caller destructures: the transaction was ill-formed, or the single
- *  enforcer refused it. These are never thrown. A breach of the ledger's own
- *  integrity — a duplicate transaction id (see {@link LedgerStore.append}) — is
- *  deliberately NOT in this union: it is corruption, not a request a caller can
- *  reasonably handle, so it halts the post loudly by rejecting rather than being
- *  downgraded to a routine error someone might shrug off [LAW:no-silent-failure]. */
-export type PostError = TransactionError | PostingRejection;
+ *  values the caller destructures: the transaction was ill-formed, the single
+ *  enforcer refused it, or its idempotency key was already spent on a *different*
+ *  operation. These are never thrown. A breach of the ledger's own integrity — a
+ *  duplicate transaction id or a duplicate key reaching the log (see
+ *  {@link LedgerStore.append}) — is deliberately NOT in this union: it is
+ *  corruption, not a request a caller can reasonably handle, so it halts the post
+ *  loudly by rejecting rather than being downgraded to a routine error someone
+ *  might shrug off [LAW:no-silent-failure]. */
+export type PostError = TransactionError | PostingRejection | IdempotencyConflict;
 
 /**
  * The single write path for every coin movement [LAW:single-enforcer]. There is
@@ -97,12 +102,36 @@ export class Ledger {
   }
 
   /** Records one balanced coin movement, or returns the single reason it cannot
-   *  be recorded. The only mutator of value in the system. Returns a `Result`
-   *  for every domain outcome; it rejects only if the ledger's own integrity is
-   *  breached (a duplicate transaction id), which halts loudly rather than
-   *  silently double-posting [LAW:no-silent-failure]. */
+   *  be recorded. The only mutator of value in the system. Idempotent on the
+   *  request's key: a retry of the same operation returns the original receipt and
+   *  appends nothing, so it can never double-spend; reusing a key for a *different*
+   *  operation is refused as a value. The dedup check and the append run in the
+   *  same serialized critical section, so two concurrent retries of one key cannot
+   *  both miss and both append [LAW:no-ambient-temporal-coupling]. Returns a
+   *  `Result` for every domain outcome; it rejects only if the ledger's own
+   *  integrity is breached (a duplicate id or key reaching the log), which halts
+   *  loudly rather than silently double-posting [LAW:no-silent-failure]. */
   post(request: PostRequest): Promise<Result<PostReceipt, PostError>> {
     return this.#serialize(async (): Promise<Result<PostReceipt, PostError>> => {
+      const prior = await this.store.findByIdempotencyKey(request.idempotencyKey);
+      const idempotency = decideIdempotency(request, prior);
+      switch (idempotency.kind) {
+        case 'replay': {
+          // The receipt of the prior post, re-derived from the authoritative log
+          // by the one balance author — never a remembered copy, so it can never
+          // disagree with history [LAW:one-source-of-truth].
+          const history = await this.store.history();
+          return ok({
+            transaction: idempotency.recorded,
+            balances: resultingBalances(history, idempotency.recorded),
+          });
+        }
+        case 'conflict':
+          return err(idempotency.conflict);
+        case 'fresh':
+          break;
+      }
+
       const built = transaction({
         id: this.newTransactionId(),
         reason: request.reason,
@@ -130,7 +159,12 @@ export class Ledger {
       if (!decision.ok) return decision;
 
       await this.store.append(txn);
-      return ok({ transaction: txn, balances: decision.value.changed });
+      // The receipt's balances come from the one balance author folding the
+      // authoritative log — the same function a later replay of this post will
+      // use — so the fresh receipt and its replay are identical by construction,
+      // not by two algorithms coinciding [LAW:one-source-of-truth].
+      const history = await this.store.history();
+      return ok({ transaction: txn, balances: resultingBalances(history, txn) });
     });
   }
 
