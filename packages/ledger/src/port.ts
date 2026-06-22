@@ -26,9 +26,9 @@ import type {
  * second authority that could drift [LAW:one-source-of-truth].
  *
  * This seam is the *write and point-read* surface only: open, post, read one
- * balance, close. The richer query surface — full history, all-account balances,
- * point-in-time/audit views — is deliberately the audit/query API's concern
- * (ledger .6), built directly on the engine's own history, not bolted onto the
+ * balance, close. The richer query surface — full per-account history and
+ * point-in-time/audit balances — is deliberately the `LedgerQuery` seam's concern
+ * (`query.ts`), built directly on the engine's own history, not bolted onto the
  * write path [LAW:decomposition]. Its absence here is a cut, not an amputation.
  */
 export interface Ledger {
@@ -80,7 +80,7 @@ export interface PostRequest {
  *  The balances are each touched account's balance *as currently recorded*. For a
  *  fresh post that is exactly the resulting balance; for a replay it is the
  *  current balance (the movement is not re-applied). Point-in-time historical
- *  balances are the concern of the audit/query API (ledger .6), not this receipt. */
+ *  balances are the concern of the `LedgerQuery` seam, not this receipt. */
 export interface PostReceipt {
   readonly transactionId: TransactionId;
   readonly occurredAt: Timestamp;

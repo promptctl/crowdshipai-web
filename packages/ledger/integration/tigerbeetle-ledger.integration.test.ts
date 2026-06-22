@@ -12,8 +12,9 @@ import {
   type Transfer,
 } from '@crowdship/ledger-kernel';
 
-import { createTigerBeetleLedger, type Ledger } from '../src/index.js';
+import { createTigerBeetleLedger, type Ledger, type LedgerQuery } from '../src/index.js';
 import { ledgerContract } from '../test/ledger-contract.js';
+import { ledgerQueryContract } from '../test/ledger-query-contract.js';
 import { startTigerBeetle, type RunningTigerBeetle } from './tigerbeetle-harness.js';
 
 // The real engine, proven against the identical contract the in-memory fake passes
@@ -22,7 +23,7 @@ import { startTigerBeetle, type RunningTigerBeetle } from './tigerbeetle-harness
 // atomic multi-leg movements — so the fake can never silently drift from production
 // [LAW:behavior-not-structure]. A live cluster is booted once for the file.
 let running: RunningTigerBeetle;
-let ledger: Ledger;
+let ledger: Ledger & LedgerQuery;
 
 beforeAll(async () => {
   running = await startTigerBeetle();
@@ -35,6 +36,13 @@ afterAll(async () => {
 });
 
 ledgerContract(() => ledger);
+
+// The same audit/query contract the in-memory fake passes, now proven against the
+// real engine: point-in-time balances and full per-account history read from
+// TigerBeetle's own native history (the `history` account flag), with the verbatim
+// account ids and reasons recovered from the control-plane store. One ledger instance
+// records and reads through one name store, the single-process case [LAW:behavior-not-structure].
+ledgerQueryContract(() => ledger);
 
 // Two ledgers over two clients against ONE cluster stand in for two app processes:
 // their in-process serializers share nothing, so this is the cross-process idempotency

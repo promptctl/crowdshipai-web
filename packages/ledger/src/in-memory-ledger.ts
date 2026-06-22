@@ -4,12 +4,14 @@ import type {
   AccountKind,
   Result,
   Timestamp,
+  TransactionReason,
   Transfer,
 } from '@crowdship/ledger-kernel';
 import { err, mayGoNegative, ok, timestamp } from '@crowdship/ledger-kernel';
 
 import { touchedAccounts, transactionIdOf } from './movement.js';
 import type { AccountConflict, Ledger, PostError, PostReceipt, PostRequest } from './port.js';
+import type { AccountMovement, LedgerQuery } from './query.js';
 
 /** Supplies the moment a movement is recorded. The boundary owns time; the fake
  *  never reads a clock implicitly [LAW:no-ambient-temporal-coupling]. */
@@ -31,14 +33,14 @@ type RecordedMovement =
   | {
       readonly kind: 'success';
       readonly transfers: readonly Transfer[];
-      readonly reason: string;
+      readonly reason: TransactionReason;
       readonly occurredAt: Timestamp;
     }
   | { readonly kind: 'failed' };
 
 const sameMovement = (
   request: PostRequest,
-  recorded: { readonly transfers: readonly Transfer[]; readonly reason: string },
+  recorded: { readonly transfers: readonly Transfer[]; readonly reason: TransactionReason },
 ): boolean =>
   request.reason === recorded.reason &&
   request.transfers.length === recorded.transfers.length &&
@@ -71,7 +73,7 @@ const netEffect = (transfers: readonly Transfer[]): Map<AccountId, bigint> => {
  * no-double-spend guarantee falls out of single-threaded execution, with no lock
  * to own [LAW:no-ambient-temporal-coupling].
  */
-export class InMemoryLedger implements Ledger {
+export class InMemoryLedger implements Ledger, LedgerQuery {
   readonly #registry = new Map<AccountId, AccountKind>();
   readonly #balances = new Map<AccountId, bigint>();
   readonly #movements = new Map<string, RecordedMovement>();
@@ -148,11 +150,80 @@ export class InMemoryLedger implements Ledger {
     return Promise.resolve(this.#balances.get(account) ?? 0n);
   }
 
+  // The query side derives every answer by folding the same recorded movements the
+  // write side appended — the fake's single source of truth — never a parallel
+  // balance kept in step [LAW:one-source-of-truth]. Folding is the fake's nature;
+  // the real engine answers the identical contract from its own native history, and
+  // the shared query contract proves the two agree [LAW:behavior-not-structure].
+
+  // The point-in-time balance is the sum of every leg delta from a movement at or
+  // before `asOf`. Movements are scanned in full (the fake holds them all in
+  // memory); a later movement simply does not contribute, so the answer is immune
+  // to activity after `asOf`.
+  balanceAt(account: AccountId, asOf: Timestamp): Promise<bigint> {
+    let balance = 0n;
+    for (const movement of this.#successes()) {
+      if (movement.occurredAt > asOf) continue;
+      for (const leg of movement.transfers) {
+        if (leg.from === account) balance -= leg.amount;
+        if (leg.to === account) balance += leg.amount;
+      }
+    }
+    return Promise.resolve(balance);
+  }
+
+  // Replays the movements in record order, the same order the engine commits them,
+  // carrying a running balance for every account so each leg that touches `account`
+  // can report the balance it left behind. One entry per touching leg, oldest first.
+  historyOf(account: AccountId): Promise<readonly AccountMovement[]> {
+    const entries: AccountMovement[] = [];
+    const running = new Map<AccountId, bigint>();
+    for (const movement of this.#successes()) {
+      for (const leg of movement.transfers) {
+        const fromNext = (running.get(leg.from) ?? 0n) - leg.amount;
+        const toNext = (running.get(leg.to) ?? 0n) + leg.amount;
+        running.set(leg.from, fromNext);
+        running.set(leg.to, toNext);
+        if (leg.from === account) {
+          entries.push({
+            occurredAt: movement.occurredAt,
+            direction: 'debit',
+            amount: leg.amount,
+            counterparty: leg.to,
+            resultingBalance: fromNext,
+            reason: movement.reason,
+          });
+        } else if (leg.to === account) {
+          entries.push({
+            occurredAt: movement.occurredAt,
+            direction: 'credit',
+            amount: leg.amount,
+            counterparty: leg.from,
+            resultingBalance: toNext,
+            reason: movement.reason,
+          });
+        }
+      }
+    }
+    return Promise.resolve(entries);
+  }
+
+  // Recorded movements in append order (a Map preserves insertion order), narrowed
+  // to the successes — a failed key holds no transfers and is not part of history.
+  *#successes(): Generator<Extract<RecordedMovement, { kind: 'success' }>> {
+    for (const movement of this.#movements.values()) {
+      if (movement.kind === 'success') yield movement;
+    }
+  }
+
   close(): Promise<void> {
     return Promise.resolve();
   }
 }
 
-/** Builds the in-memory fake ledger. Tests inject a deterministic clock so the
- *  receipt's occurred-at moment is reproducible. */
-export const createInMemoryLedger = (clock?: Clock): Ledger => new InMemoryLedger(clock);
+/** Builds the in-memory fake ledger, exposing both the write seam and the
+ *  audit/query seam over one source of truth. Tests inject a deterministic clock
+ *  so the receipt's occurred-at moment — and every point-in-time query — is
+ *  reproducible. */
+export const createInMemoryLedger = (clock?: Clock): Ledger & LedgerQuery =>
+  new InMemoryLedger(clock);
