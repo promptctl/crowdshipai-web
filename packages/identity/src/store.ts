@@ -21,7 +21,8 @@ export interface Recovery {
  * invalidation on reset, no account enumeration) live once in the service above
  * this seam; an in-memory map and a durable SQLite table are two *stores*, never
  * two services, so those money-critical behaviors can never drift between
- * implementations [LAW:single-enforcer]. This is the auth analogue of `LedgerStore`.
+ * implementations [LAW:single-enforcer]. This is the auth analogue of the ledger's
+ * persistence seam.
  *
  * Three records, one concern. The account registry is the authoritative record
  * of which identities exist; lookup-by-email is a derived index into it the store

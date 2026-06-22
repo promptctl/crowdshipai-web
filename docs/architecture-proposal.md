@@ -13,7 +13,7 @@ code is the **connective substrate** — the domain truth (coins, menu, settleme
 cut, policy) plus the seams that bind the adopted parts into a single product. This is
 not architectural taste; it is the founding requirement — *"swap things around without
 rewriting the app"* — restated as `[LAW:locality-or-seam]`. The repo already proves the
-pattern at small scale (`CrowdCatalog`, `LedgerStore`); the proposal is to apply it
+pattern at small scale (`CrowdCatalog`, the `Ledger` seam); the proposal is to apply it
 deliberately to every major piece.
 
 The research behind this doc already paid the dividend that validates the approach: it
@@ -107,7 +107,7 @@ Each step is a thing real people can use:
    else assumes; unblocks payouts + ingest.
 2. **Video seam → Mux** + **Chat seam → Centrifugo**: a real builder streams, an audience
    watches and talks. *Watchable.*
-3. **Ledger adapter → TigerBeetle** behind the existing `LedgerStore` seam + **on-ramp →
+3. **Ledger adapter → TigerBeetle** behind the `Ledger` seam (done) + **on-ramp →
    Stripe**: backers buy coins. *The economy has fuel.*
 4. **PricedOffer fire path** (the dataflow spine): an offer fires, coins move, the room
    sees it. *Tippable. The MVP moment.*

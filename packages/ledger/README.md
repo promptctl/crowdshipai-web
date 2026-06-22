@@ -1,89 +1,110 @@
 # @crowdship/ledger
 
-The single write path for the coin ledger — the one place any coin movement is
-recorded. It wraps the pure [`@crowdship/ledger-kernel`](../ledger-kernel) with
-the things the kernel deliberately refuses to hold: balances, persistence,
-no-overdraft enforcement, the clock, and id generation.
+The coin ledger — the one place any coin movement is recorded. It is a
+**ports-and-adapters seam**: callers speak coins, and the settlement engine sits
+entirely behind the seam, never leaking into a caller ([LAW:locality-or-seam]).
+
+The integrity of value is not something this package *proves by building it* — it
+is something we *get* by recording coins in the most trustworthy proven engine and
+shipping it. That engine is **TigerBeetle**.
 
 ## The shape
 
 ```
-caller ── post(transfers, reason, key) ──▶  Ledger  ──▶  LedgerStore (append-only log + registry)
+caller ── post(transfers, reason, key) ──▶  Ledger (port)  ──▶  TigerBeetle  (production)
+                                              ▲                  InMemoryLedger (the test fake)
                                               │
-                                              ├─ findByIdempotencyKey(key)           [reads: the recorded txn, if any]
-                                              ├─ decideIdempotency(req, prior)        [pure: fresh | replay | conflict]
-                                              ├─ generates id, supplies occurredAt   [effects at the boundary]
-                                              ├─ gathers account kinds + balances     [reads]
-                                              ├─ decidePosting(view, txn)             [pure gate — the one enforcer]
-                                              ├─ append(txn)                          [acts]
-                                              └─ resultingBalances(log, txn)          [pure: the one receipt author]
+                                  open / post / balanceOf / close
 ```
 
-The idempotency lookup is a *pure lookup* — it returns only the recorded
-transaction, never balances. Both receipts a `post` can return (the fresh post and
-the replay of a prior one) derive their balances above the seam through the single
-`resultingBalances` function, so the two can never disagree and every engine behind
-the seam implements a lookup and nothing more. (`[LAW:one-source-of-truth]`,
-`[LAW:locality-or-seam]`)
+`Ledger` (`src/port.ts`) is the seam. Two implementations stand behind it, and
+nothing else in the system knows which one it holds ([LAW:one-type-per-behavior]):
 
-There is exactly one way to move value: `Ledger.post`. There is no second
-constructor, no direct store mutation, no balance you can set. (`[LAW:single-enforcer]`)
+- **`TigerBeetleLedger`** (`src/tigerbeetle-ledger.ts`) — production. A thin adapter
+  over a TigerBeetle cluster. It holds **no balance or account state of its own**:
+  every domain id maps to an engine id by a pure hash, so there is nothing here that
+  could drift from the engine ([LAW:one-source-of-truth]).
+- **`InMemoryLedger`** (`src/in-memory-ledger.ts`) — a small fake behind the same
+  seam, so everything downstream of the ledger can be tested fast and hermetically.
+  It is a test double, **not** a second production ledger.
 
-## What it guarantees
+## The engine is the single enforcer
 
-- **One enforcer, no torn writes.** Every `post` and `openAccount` is serialized
-  through a single-writer chain, so a read-decide-append sequence can never
-  interleave with another and double-spend. The serialization is an explicit
-  owner, not an accident of synchronous execution. (`[LAW:no-ambient-temporal-coupling]`)
-- **No coin from nowhere.** A post that would drive any account below zero is
-  refused — unless the account is the `mint`, whose negative balance *is* the
-  number of coins in circulation (`mayGoNegative`). Overdraft is judged on the
-  *net* effect, so an account that dips and recovers within one atomic
-  transaction is never falsely refused.
-- **Append-only history is the truth.** Balances are *derived* by folding the
-  log, never stored as a second number that could drift. (`[LAW:one-source-of-truth]`)
-- **A retry can never double-spend.** Every post is idempotent on its key: re-sending
-  the same operation under the same key returns the *original* receipt (point-in-time
-  balances and all) and appends nothing. The dedup check and the append run in the same
-  serialized section, so even concurrent retries of one key let exactly one movement
-  through. Reusing a key for a *different* operation is refused loudly as a value
-  (`idempotency-key-reused`) rather than silently absorbed. The seen-keys answer is
-  *derived from the log* — every transaction carries its key — so a durable store
-  deduplicates correctly across restarts with no second record to keep in sync.
-  (`[LAW:one-source-of-truth]`)
-- **Failures are values.** A bad post returns a `Result` whose error names the
-  single reason (`no-transfers`, `unknown-account`, `would-overdraft`,
-  `idempotency-key-reused`); nothing is thrown-and-swallowed. The one exception is a
-  re-appended transaction id or idempotency key reaching the log — corruption of the
-  authoritative record — which halts loudly. (`[LAW:no-silent-failure]`)
+TigerBeetle owns every money rule; this package re-checks none of them, because a
+second authority is one that can drift ([LAW:single-enforcer], [LAW:one-source-of-truth]):
 
-## Effects live only here
+- **No coin from nowhere.** Each account kind maps to a TigerBeetle account flag.
+  Every kind but the `mint` is held to *debits must not exceed credits* — i.e. it
+  cannot overdraft — by the engine. The mint omits that flag; its negative balance
+  *is* the coins in circulation (`mayGoNegative`).
+- **Balances are the engine's.** A balance is `credits_posted - debits_posted`, read
+  straight from the engine. Nothing is folded or cached on our side.
+- **Atomic movements.** A multi-leg movement (a backer paying a builder *and* the
+  platform cut) is one chain of linked transfers: it commits whole or not at all.
+- **Idempotency is the engine's.** Each leg's transfer id is a deterministic hash of
+  the idempotency key and leg index, so a retry submits the same ids and the engine
+  dedupes them natively.
 
-The kernel never reads a clock or generates randomness. This boundary supplies
-both as injected capabilities (`clock`, `newTransactionId`), so tests run with a
-deterministic clock and id source and the kernel stays pure. (`[LAW:effects-at-boundaries]`)
+## The idempotency contract
+
+An idempotency **key is single-use**:
+
+- A movement that **succeeds** is replayable — re-posting the identical movement
+  under the same key returns the *original* receipt and records nothing, so a retry
+  can never double-spend.
+- A movement that **fails** (overdraft, unknown account) still **spends its key**:
+  the engine remembers the failed transfer ids, so re-posting under that key is
+  refused as `idempotency-key-reused`. A corrected retry must use a **fresh key**.
+- Reusing a key for a **different** movement is refused the same way.
+
+Idempotency is enforced by the engine, not by an in-process lock, so it holds across
+processes — the platform's horizontal-scale posture. A small in-process serializer
+orders same-key posts to keep the common path tidy, but the engine is the authority,
+and the integration suite proves the cross-process case against a live cluster.
+
+## Failures are values; corruption is loud
+
+A bad post returns a `Result` whose error names the single reason
+(`unknown-account`, `would-overdraft`, `idempotency-key-reused`); nothing is
+thrown-and-swallowed ([LAW:dataflow-not-control-flow]). The one thing that *does*
+throw is genuine engine corruption — a status the domain types should have made
+impossible — which halts loudly rather than being mapped to a routine error
+([LAW:no-silent-failure]).
 
 ```ts
-import { createLedger } from '@crowdship/ledger';
+import { createInMemoryLedger, createTigerBeetleLedger } from '@crowdship/ledger';
 
-const ledger = createLedger(); // in-memory store, system clock, uuid ids
+// Tests / local dev: the fake, optionally with a deterministic clock.
+const ledger = createInMemoryLedger();
+
+// Production: a real cluster behind the same seam.
+// const ledger = createTigerBeetleLedger({ clusterId: 0n, replicaAddresses: ['127.0.0.1:3000'] });
 
 await ledger.openAccount({ id: mintId, kind: 'mint' });
 await ledger.openAccount({ id: aliceId, kind: 'user-wallet' });
 
-const receipt = await ledger.post({ transfers: [mintToAlice], reason, idempotencyKey });
-// receipt.ok === true → receipt.value.balances has alice: +500, mint: -500
+const result = await ledger.post({ transfers: [mintToAlice], reason, idempotencyKey });
+// result.ok === true → result.value.balances has alice: +500, mint: -500
 ```
+
+## Testing
+
+- `pnpm test` — the fast suite. Runs the shared seam contract
+  (`test/ledger-contract.ts`) against the in-memory fake. No engine required.
+- `pnpm test:integration` — runs the **same** contract, plus cross-process tests,
+  against a real TigerBeetle cluster the harness boots itself
+  (`integration/`). The fake and the engine must satisfy the identical contract, so
+  the fake can never silently drift from production ([LAW:behavior-not-structure]).
+  A money path is never silently un-run: if the engine cannot be obtained, the suite
+  fails loudly ([LAW:no-silent-failure]).
 
 ## What lives elsewhere (on purpose)
 
-- **Continuous reconciliation / drift alarms** → ledger ticket .4. This path
-  enforces per-post invariants; global monitoring (and reconciling any future
-  derived balance index against the fold) is its own boundary.
-- **Custodial-vs-on-chain settlement** → ledger ticket .5. The `LedgerStore`
-  seam is async precisely so a durable database or settlement rail swaps in
-  without touching the write path. (`[LAW:locality-or-seam]`)
-- **The full balance/audit query API** → ledger ticket .6, built on the same
-  "balances are a fold of history" derivation this package establishes.
-- **Throughput** → ledger ticket .7. The reference store folds the log on demand;
-  a derived index for velocity is a later, reconciled optimization.
+- **The balance/audit query API** — full history, all-account balances, point-in-time
+  views → ledger ticket .6, built on TigerBeetle's own history (accounts are opened
+  with the engine's `history` flag so those queries are possible). This seam is the
+  write-and-point-read surface only; the richer query surface is a separate cut, not
+  an amputation ([LAW:decomposition]).
+- **Throughput / load validation at production coin velocity** → ledger ticket .7.
+- **The buy/sell rate** that maps coins to currency is policy and lives outside the
+  ledger entirely; here a coin is only ever a whole count.

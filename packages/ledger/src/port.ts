@@ -24,6 +24,12 @@ import type {
  * of the money rules (no-overdraft, idempotency, atomicity) [LAW:single-enforcer].
  * This package no longer re-derives or re-checks any of that — doing so would be a
  * second authority that could drift [LAW:one-source-of-truth].
+ *
+ * This seam is the *write and point-read* surface only: open, post, read one
+ * balance, close. The richer query surface — full history, all-account balances,
+ * point-in-time/audit views — is deliberately the audit/query API's concern
+ * (ledger .6), built directly on the engine's own history, not bolted onto the
+ * write path [LAW:decomposition]. Its absence here is a cut, not an amputation.
  */
 export interface Ledger {
   /** Registers an account and its negativity rule. Idempotent for the same kind;
@@ -31,10 +37,15 @@ export interface Ledger {
   openAccount(account: Account): Promise<Result<void, AccountConflict>>;
 
   /** Records one balanced coin movement, or returns the single reason it cannot
-   *  be recorded. The only mutator of value in the system. Idempotent on the
-   *  request's key: a retry of the same movement returns the original receipt and
-   *  records nothing new, so it can never double-spend; reusing a key for a
-   *  *different* movement is refused as a value. */
+   *  be recorded. The only mutator of value in the system.
+   *
+   *  The idempotency key is *single-use*. A movement that succeeds is replayable:
+   *  re-posting the identical movement under the same key returns the original
+   *  receipt and records nothing new, so a retry can never double-spend. A movement
+   *  that *fails* (overdraft, unknown account) still spends its key — the engine
+   *  remembers the failed attempt, so re-posting under that key is refused as
+   *  `idempotency-key-reused`; a corrected retry must use a fresh key. Reusing a key
+   *  for a *different* movement is likewise refused as a value. */
   post(request: PostRequest): Promise<Result<PostReceipt, PostError>>;
 
   /** The recorded balance of one account: positive coins held, negative for the
@@ -52,9 +63,12 @@ export interface Ledger {
  *  moved, and the idempotency key that makes the post replay-safe. The key
  *  identifies *this specific movement*; retrying means resubmitting the identical
  *  set of transfers under the same key. The transaction id and occurred-at moment
- *  are assigned by the engine, never supplied by the caller. */
+ *  are assigned by the engine, never supplied by the caller.
+ *
+ *  A movement has at least one transfer — an empty movement is unrepresentable, so
+ *  no caller or implementation defends against it [LAW:types-are-the-program]. */
 export interface PostRequest {
-  readonly transfers: readonly Transfer[];
+  readonly transfers: readonly [Transfer, ...Transfer[]];
   readonly reason: TransactionReason;
   readonly idempotencyKey: IdempotencyKey;
 }
@@ -93,6 +107,11 @@ export type AccountConflict = {
  * account below zero against its kind, or reused a key already spent on a
  * *different* movement.
  *
+ * `idempotency-key-reused` covers every way a key is already spent: a prior
+ * *successful* movement under it differs from this one, or a prior *failed* attempt
+ * under it poisoned the key. (An identical replay of a prior success is not an
+ * error — it returns the original receipt.)
+ *
  * A breach of the engine's own integrity — a malformed request the engine rejects
  * for a reason that should be impossible given these types, or an internal-id
  * collision — is deliberately NOT in this union: it is corruption, not a request a
@@ -100,7 +119,6 @@ export type AccountConflict = {
  * downgraded to a routine error someone might shrug off [LAW:no-silent-failure].
  */
 export type PostError =
-  | { readonly kind: 'empty-movement' }
   | { readonly kind: 'unknown-account'; readonly account: AccountId }
   | { readonly kind: 'would-overdraft'; readonly account: AccountId }
   | { readonly kind: 'idempotency-key-reused'; readonly key: IdempotencyKey };

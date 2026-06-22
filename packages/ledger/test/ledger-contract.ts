@@ -54,9 +54,13 @@ export const ledgerContract = (ledgerOf: () => Ledger): void => {
   const leg = (from: AccountId, to: AccountId, amount: bigint): Transfer =>
     must(transfer(from, to, coins(amount)));
   const move = (
-    transfers: readonly Transfer[],
+    transfers: readonly [Transfer, ...Transfer[]],
     idempotencyKey: IdempotencyKey,
-  ): { transfers: readonly Transfer[]; reason: TransactionReason; idempotencyKey: IdempotencyKey } => ({
+  ): {
+    transfers: readonly [Transfer, ...Transfer[]];
+    reason: TransactionReason;
+    idempotencyKey: IdempotencyKey;
+  } => ({
     transfers,
     reason,
     idempotencyKey,
@@ -111,13 +115,6 @@ export const ledgerContract = (ledgerOf: () => Ledger): void => {
       expect(await L.balanceOf(bob)).toBe(0n);
     });
 
-    test('an empty movement is refused', async () => {
-      const L = ledgerOf();
-      const { key } = scope();
-      const result = await L.post(move([], key('nothing')));
-      expect(result).toEqual({ ok: false, error: { kind: 'empty-movement' } });
-    });
-
     test('re-opening an account with the same kind is a no-op; a different kind is refused', async () => {
       const L = ledgerOf();
       const { acc } = scope();
@@ -146,6 +143,8 @@ export const ledgerContract = (ledgerOf: () => Ledger): void => {
 
       expect(retry.transactionId).toBe(first.transactionId);
       expect(retry.occurredAt).toBe(first.occurredAt);
+      expect(retry.balances.get(alice)).toBe(500n); // the replay reports balances too
+      expect(retry.balances.get(mint)).toBe(-500n);
       expect(await L.balanceOf(alice)).toBe(500n); // funded once, not twice
     });
 
@@ -181,6 +180,35 @@ export const ledgerContract = (ledgerOf: () => Ledger): void => {
 
       expect(conflict).toEqual({ ok: false, error: { kind: 'idempotency-key-reused', key: k } });
       expect(await L.balanceOf(alice)).toBe(100n);
+    });
+
+    test('a failed post spends its key; a corrected retry needs a fresh key', async () => {
+      const L = ledgerOf();
+      const { acc, key } = scope();
+      const mint = acc('mint');
+      const alice = acc('alice');
+      const sink = acc('sink');
+      must(await L.openAccount(account(mint, 'mint')));
+      must(await L.openAccount(account(alice, 'user-wallet')));
+      must(await L.openAccount(account(sink, 'platform-revenue')));
+
+      // Alice holds nothing, so this post overdrafts and fails.
+      const k = key('topup');
+      const failed = await L.post(move([leg(alice, sink, 50n)], k));
+      expect(failed).toEqual({ ok: false, error: { kind: 'would-overdraft', account: alice } });
+
+      // Fund alice, then retry the SAME movement under the SAME key. The key was spent
+      // on the failed attempt, so the retry is refused — never silently re-applied.
+      must(await L.post(move([leg(mint, alice, 100n)], key('fund'))));
+      const reuse = await L.post(move([leg(alice, sink, 50n)], k));
+      expect(reuse).toEqual({ ok: false, error: { kind: 'idempotency-key-reused', key: k } });
+      expect(await L.balanceOf(alice)).toBe(100n);
+      expect(await L.balanceOf(sink)).toBe(0n);
+
+      // The corrected movement succeeds under a FRESH key.
+      const retried = mustReceipt(await L.post(move([leg(alice, sink, 50n)], key('topup-2'))));
+      expect(retried.balances.get(alice)).toBe(50n);
+      expect(await L.balanceOf(sink)).toBe(50n);
     });
 
     test('the same movement under two different keys posts twice', async () => {

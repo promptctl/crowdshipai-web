@@ -1,14 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
-import type {
-  Account,
-  AccountId,
-  AccountKind,
-  Result,
-  Timestamp,
-  Transfer,
-} from '@crowdship/ledger-kernel';
+import type { Account, AccountId, AccountKind, Result, Timestamp } from '@crowdship/ledger-kernel';
 import { err, mayGoNegative, ok, timestamp } from '@crowdship/ledger-kernel';
 import type {
   Account as TBAccount,
@@ -16,7 +9,7 @@ import type {
   Transfer as TBTransfer,
 } from 'tigerbeetle-node';
 
-import { transactionIdOf } from './movement.js';
+import { touchedAccounts, transactionIdOf } from './movement.js';
 import type { AccountConflict, Ledger, PostError, PostReceipt, PostRequest } from './port.js';
 
 // tigerbeetle-node is a CommonJS native addon; under NodeNext ESM its enum exports
@@ -86,21 +79,6 @@ const nsToTimestamp = (ns: bigint): Timestamp => {
   const ms = timestamp(Number(ns / 1_000_000n));
   if (!ms.ok) throw new Error(`engine returned an unrepresentable timestamp: ${ns}`);
   return ms.value;
-};
-
-/** Every account a movement touches, in first-seen order. */
-const touchedAccounts = (transfers: readonly Transfer[]): readonly AccountId[] => {
-  const seen = new Set<AccountId>();
-  const order: AccountId[] = [];
-  for (const t of transfers) {
-    for (const a of [t.from, t.to]) {
-      if (!seen.has(a)) {
-        seen.add(a);
-        order.push(a);
-      }
-    }
-  }
-  return order;
 };
 
 /**
@@ -192,27 +170,26 @@ export class TigerBeetleLedger implements Ledger {
   }
 
   post(request: PostRequest): Promise<Result<PostReceipt, PostError>> {
-    if (request.transfers.length === 0) return Promise.resolve(err({ kind: 'empty-movement' }));
     return this.#serializer.run(request.idempotencyKey, () => this.#post(request));
   }
 
   async #post(request: PostRequest): Promise<Result<PostReceipt, PostError>> {
-    const key = request.idempotencyKey;
-    const count = request.transfers.length;
     const reasonFp = reasonFingerprint(request.reason);
-
-    // Probe the leg ids this movement would occupy, plus one past the end, so a
-    // reused key is classified before anything is submitted: a present first leg
-    // means the key is already spent; the extra probe catches a retry that asks for
-    // more legs than the original recorded.
-    const probeIds = Array.from({ length: count + 1 }, (_unused, i) => legTbId(key, i));
-    const existing = await this.client.lookupTransfers(probeIds);
-    const byId = new Map(existing.map((t) => [t.id, t]));
-
-    if (byId.has(legTbId(key, 0))) {
+    const byId = await this.#probe(request);
+    if (byId.has(legTbId(request.idempotencyKey, 0))) {
       return this.#classifyReused(request, reasonFp, byId);
     }
     return this.#submitFresh(request, reasonFp);
+  }
+
+  // Look up the leg ids this movement would occupy, plus one past the end so a
+  // recorded movement with *more* legs than this request is detectable. Keyed by id.
+  // A present first leg means the key already holds a recorded movement.
+  async #probe(request: PostRequest): Promise<Map<bigint, TBTransfer>> {
+    const key = request.idempotencyKey;
+    const probeIds = Array.from({ length: request.transfers.length + 1 }, (_unused, i) => legTbId(key, i));
+    const existing = await this.client.lookupTransfers(probeIds);
+    return new Map(existing.map((t) => [t.id, t]));
   }
 
   // A leg already exists under this key: the only success is an exact replay of the
@@ -279,6 +256,16 @@ export class TigerBeetleLedger implements Ledger {
       return ok(await this.#receiptFresh(request, nsToTimestamp(head.timestamp)));
     }
 
+    // Nothing was applied — a linked chain commits whole or not at all, and an
+    // already-recorded id commits nothing — so it is safe to classify why the engine
+    // refused without unwinding any partial state.
+    if (results.some((r) => r.status === CreateTransferStatus.id_already_failed)) {
+      // A prior post under this key already failed; the engine remembers failed ids
+      // forever, so the key is terminally spent — a corrected retry must use a fresh
+      // key. Refused as a value, never thrown [LAW:no-silent-failure].
+      return err({ kind: 'idempotency-key-reused', key });
+    }
+
     // One leg failed; the others report `linked_event_failed` as a consequence. The
     // real cause is the single leg with a substantive status.
     const causeIndex = results.findIndex(
@@ -301,12 +288,30 @@ export class TigerBeetleLedger implements Ledger {
       case CreateTransferStatus.credit_account_not_found:
         return err({ kind: 'unknown-account', account: leg.to });
       default:
-        // Every remaining status means we built a request the types should have made
-        // impossible (a zero amount, same-account transfer, reused leg id from a hash
-        // collision, …): corruption of our own construction, halted loudly rather
-        // than mapped to a routine error [LAW:no-silent-failure].
-        throw new Error(`ledger corruption: unexpected transfer status ${String(cause.status)}`);
+        // The engine refused for a reason that is not a money rule. Under correct
+        // construction (the kernel forbids zero amounts and same-account transfers)
+        // this means the key's legs already exist because another process committed
+        // this movement between our probe and submit — the in-process serializer
+        // cannot order across processes. Re-probe and let the engine, the true single
+        // authority on idempotency, say replay or conflict; a status with no recorded
+        // movement behind it is genuine corruption, halted loudly there
+        // [LAW:single-enforcer].
+        return this.#reclassifyAfterRace(request, reasonFp, cause.status);
     }
+  }
+
+  async #reclassifyAfterRace(
+    request: PostRequest,
+    reasonFp: bigint,
+    status: number,
+  ): Promise<Result<PostReceipt, PostError>> {
+    const byId = await this.#probe(request);
+    if (byId.has(legTbId(request.idempotencyKey, 0))) {
+      return this.#classifyReused(request, reasonFp, byId);
+    }
+    throw new Error(
+      `ledger corruption: transfer status ${String(status)} with no recorded movement for key ${request.idempotencyKey}`,
+    );
   }
 
   async #receiptFresh(request: PostRequest, occurredAt: Timestamp): Promise<PostReceipt> {
