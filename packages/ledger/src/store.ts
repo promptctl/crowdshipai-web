@@ -6,8 +6,10 @@ import type {
   Transaction,
   TransactionId,
 } from '@crowdship/ledger-kernel';
-import { netEffect, ok, err } from '@crowdship/ledger-kernel';
+import { ok, err } from '@crowdship/ledger-kernel';
 import type { Result } from '@crowdship/ledger-kernel';
+
+import { foldBalances } from './balances.js';
 
 /**
  * Opening an account that already exists with a different kind is refused: an
@@ -131,15 +133,8 @@ export class InMemoryLedgerStore implements LedgerStore {
   }
 
   balances(): Promise<ReadonlyMap<AccountId, bigint>> {
-    const balances = new Map<AccountId, bigint>();
-    for (const txn of this.#log) {
-      for (const [account, delta] of netEffect(txn)) {
-        balances.set(account, (balances.get(account) ?? 0n) + delta);
-      }
-    }
-    for (const [account, balance] of balances) {
-      if (balance === 0n) balances.delete(account);
-    }
-    return Promise.resolve(balances);
+    // The derived view, folded on demand from the authoritative log by the one
+    // balance author — never an incremental field that could drift from history.
+    return Promise.resolve(foldBalances(this.#log));
   }
 }

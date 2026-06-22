@@ -13,6 +13,7 @@ import type {
 import { err, ok, timestamp, transaction, transactionId } from '@crowdship/ledger-kernel';
 import type { Result } from '@crowdship/ledger-kernel';
 
+import { auditLedger, LedgerIntegrityError, type LedgerIntegrity } from './audit.js';
 import { resultingBalances } from './balances.js';
 import { decideIdempotency, type IdempotencyConflict } from './idempotency.js';
 import { decidePosting, type LedgerView, type PostingRejection } from './posting.js';
@@ -178,6 +179,41 @@ export class Ledger {
   /** The authoritative append-only record, in posted order. */
   history(): Promise<readonly Transaction[]> {
     return this.store.history();
+  }
+
+  /** Reconciles the derived balance view against the authoritative log and
+   *  returns the verdict — sound, or the specific accounts that drifted —
+   *  *without* raising. It reads the log and the derived view as one consistent
+   *  snapshot inside the single-writer critical section, so a concurrent post can
+   *  never tear the two reads apart into a false drift alarm [LAW:no-ambient-
+   *  temporal-coupling], and asks the pure {@link auditLedger} for the verdict.
+   *
+   *  This is the verdict as a *value*; {@link audit} is the policy that halts on a
+   *  bad value. A reader that wants to *display* integrity — a status panel, the
+   *  audit query API (ledger .6) — reads it here, never by catching the halt: the
+   *  report is data, not an exception [LAW:dataflow-not-control-flow]. The
+   *  snapshot-consistent read is why this lives on the ledger and not as a bare
+   *  call to {@link auditLedger} from outside, which could read a torn snapshot. */
+  inspectIntegrity(): Promise<LedgerIntegrity> {
+    return this.#serialize(async () => {
+      const [history, claimed] = [await this.store.history(), await this.store.balances()];
+      return auditLedger(history, claimed);
+    });
+  }
+
+  /** Verifies integrity, or halts loudly — the enforcing wrapper over
+   *  {@link inspectIntegrity}. On any drift it throws {@link LedgerIntegrityError}
+   *  rather than returning, because drift means a balance the system trusts cannot
+   *  be trusted and the suspect path must stop, never paper over it
+   *  [LAW:no-silent-failure]. The throw is raised here, outside the serialized
+   *  read, so a drift halts the caller without poisoning the write queue.
+   *
+   *  How *often* to call this is policy the caller owns — after each post, on a
+   *  timer, before a payout — not a mode baked into the ledger; a settlement or
+   *  payout path wires it where its own risk model demands. */
+  async audit(): Promise<void> {
+    const integrity = await this.inspectIntegrity();
+    if (integrity.kind === 'drifted') throw new LedgerIntegrityError(integrity.drift);
   }
 
   /** Every account the ledger knows and its kind. */
