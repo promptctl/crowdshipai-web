@@ -2,6 +2,11 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['packages/*/test/**/*.test.ts'],
+    // The fast suite: package unit tests plus the web tier's server-edge tests.
+    // apps/web tests import only the framework-free cores (auth-edge, the rate-limit
+    // core, client-ip), never NextAuth or next/headers, so they run in plain Node
+    // alongside the package suites — no jsdom, no app server. Integration tests that
+    // need real engines stay out (see vitest.integration.config.ts).
+    include: ['packages/*/test/**/*.test.ts', 'apps/web/test/**/*.test.ts'],
   },
 });
