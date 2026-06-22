@@ -5,6 +5,7 @@ import { effectKind } from './effect.js';
 import type { JsonValue } from './json.js';
 import { offerId } from './offer.js';
 import type { OfferId, PricedOffer } from './offer.js';
+import type { MenuPolicy } from './policy.js';
 
 /**
  * One offer as a builder types it into their authoring surface, before any of it
@@ -85,31 +86,50 @@ export const authorOffer = (draft: OfferDraft): Result<PricedOffer, OfferProblem
 export type Menu = Brand<{ readonly offers: readonly PricedOffer[] }, 'Menu'>;
 
 /**
- * What is wrong with a drafted menu. Either a field in one offer rejected (located
- * by the offer's position, since the id may be the very thing that's blank), or
- * two or more offers claim the same id — a duplicate that would make `findOffer`
- * ambiguous and let a backer buy one offer and get another, a money-adjacent lie
- * the type forbids at construction [LAW:one-source-of-truth]. Duplicate detection
- * runs over the offers that authored cleanly, so a blank-id offer is an `offer`
- * problem, never a phantom duplicate.
+ * What is wrong with a drafted menu. A field in one offer rejected (located by the
+ * offer's position, since the id may be the very thing that's blank); or two or more
+ * offers claim the same id — a duplicate that would make `findOffer` ambiguous and
+ * let a backer buy one offer and get another, a money-adjacent lie the type forbids
+ * at construction [LAW:one-source-of-truth]; or the menu exceeds the platform's
+ * offer-count guardrail. The first two are the menu's structural integrity — they
+ * make `findOffer`'s id→one-offer contract true; `too-many-offers` is a configurable
+ * platform guardrail that protects the rail from an offer-flood without touching what
+ * a builder sells or charges. The kinds share one union deliberately: they answer one
+ * question — everything wrong with this submission — so a builder fixes all of it in
+ * one pass. A new guardrail is one more arm here, and a consumer reading `problems[0]`
+ * generically never changes [LAW:carrying-cost]. Duplicate detection runs over the
+ * offers that authored cleanly, so a blank-id offer is an `offer` problem, never a
+ * phantom duplicate.
  */
 export type MenuProblem =
   | { readonly kind: 'offer'; readonly at: number; readonly problem: OfferProblem }
-  | { readonly kind: 'duplicate-id'; readonly id: OfferId; readonly at: readonly number[] };
+  | { readonly kind: 'duplicate-id'; readonly id: OfferId; readonly at: readonly number[] }
+  | { readonly kind: 'too-many-offers'; readonly limit: number; readonly actual: number };
 
 /** Non-empty for the same reason `OfferProblems` is: a menu failure always names
  * at least one fault [LAW:types-are-the-program]. */
 export type MenuProblems = readonly [MenuProblem, ...MenuProblem[]];
 
 /**
- * Author a builder's whole menu from their drafts, in order. Every draft is
- * authored — field faults are collected and located by position — and the
- * cleanly-authored offers are then checked for duplicate ids. A menu is minted
- * only when nothing is wrong; otherwise every fault across every offer is reported
- * at once [LAW:no-silent-failure]. An empty menu is valid: a builder with no
- * offers yet is a well-formed menu of none, not an error.
+ * Author a builder's whole menu from their drafts, in order, under the platform's
+ * guardrail `policy`. Every draft is authored — field faults are collected and
+ * located by position — the cleanly-authored offers are checked for duplicate ids,
+ * and the submission is checked against the policy's offer-count cap. A menu is
+ * minted only when nothing is wrong; otherwise every fault — field, duplicate, and
+ * guardrail — is reported at once [LAW:no-silent-failure]. An empty menu is valid: a
+ * builder with no offers yet is a well-formed menu of none, not an error.
+ *
+ * The guardrail is a `policy` VALUE, not a hardcoded bound: the same operations run
+ * every call and the variability lives in the value passed [LAW:dataflow-not-control-flow],
+ * so a deployment, a test, or a future per-builder tier passes a different limit and
+ * this function is untouched — only the value differs. The count is measured on the
+ * submitted drafts: the abuse surface is how many offers a builder pushes at the rail,
+ * regardless of whether each is individually well-formed.
  */
-export const authorMenu = (drafts: readonly OfferDraft[]): Result<Menu, MenuProblems> => {
+export const authorMenu = (
+  drafts: readonly OfferDraft[],
+  policy: MenuPolicy,
+): Result<Menu, MenuProblems> => {
   const problems: MenuProblem[] = [];
   const authored: { readonly offer: PricedOffer; readonly at: number }[] = [];
   drafts.forEach((draft, at) => {
@@ -134,8 +154,15 @@ export const authorMenu = (drafts: readonly OfferDraft[]): Result<Menu, MenuProb
     if (at.length > 1) problems.push({ kind: 'duplicate-id', id, at });
   }
 
-  // The menu is minted only with zero problems: every draft authored AND no id
-  // collides. The checked cast establishes the brand's invariant at this one site.
+  // Measured on the submitted drafts, not the cleanly-authored survivors: the abuse
+  // surface is what the builder pushes at the rail, however much of it is well-formed.
+  if (drafts.length > policy.maxOffers) {
+    problems.push({ kind: 'too-many-offers', limit: policy.maxOffers, actual: drafts.length });
+  }
+
+  // The menu is minted only with zero problems: every draft authored, no id
+  // collides, and the count is within policy. The checked cast establishes the
+  // brand's invariant at this one site.
   if (problems.length > 0) return err(problems as unknown as MenuProblems);
   return ok({ offers: authored.map((entry) => entry.offer) } as unknown as Menu);
 };

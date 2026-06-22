@@ -25,6 +25,13 @@ export type {
 } from './authoring.js';
 export { authorMenu, authorOffer, findOffer } from './authoring.js';
 
+// Guardrails: limits that protect the rail without constraining the shop. The
+// policy is a value `authorMenu` applies, so changing the bounds swaps the value,
+// not the code; a new guardrail is one more field here plus one more
+// `MenuProblem`/`OfferProblem` arm. The cap is a branded count minted at one boundary.
+export type { MaxOffers, MaxOffersError, MenuPolicy } from './policy.js';
+export { DEFAULT_MENU_POLICY, maxOffers } from './policy.js';
+
 // The effect is carried as data; the edge performs it [LAW:effects-at-boundaries].
 // The performer is one method that takes any effect — never one per kind — and a
 // data-driven dispatcher composes it from per-kind handlers the builder registers.
