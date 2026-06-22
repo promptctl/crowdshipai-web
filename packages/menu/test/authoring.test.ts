@@ -4,12 +4,23 @@ import { describe, expect, it } from 'vitest';
 import {
   authorMenu,
   authorOffer,
+  DEFAULT_MENU_POLICY,
   findOffer,
   type JsonValue,
   type Menu,
+  maxOffers,
+  type MenuPolicy,
   type OfferDraft,
   offerId,
 } from '../src/index.js';
+
+/** A policy generous enough that the structural tests never trip the count cap. */
+const POLICY: MenuPolicy = DEFAULT_MENU_POLICY;
+
+/** A policy with an exact offer cap, built through the branded constructor. */
+function policy(cap: number): MenuPolicy {
+  return { maxOffers: value(maxOffers(cap)) };
+}
 
 /** A draft from raw parts — the shape a builder's authoring surface submits. */
 function draft(id: string, price: bigint, kind: string, params: JsonValue = null): OfferDraft {
@@ -81,7 +92,7 @@ describe('authorMenu validates a whole menu and arranges it', () => {
         draft('vote', 200n, 'feature-vote', { featureId: 'dark-mode' }),
         draft('fund', 25000n, 'fund-feature', { repo: 'ffmpeg', issue: 4242 }),
         draft('chaos', 666n, 'replace-goal-random', null),
-      ]),
+      ], POLICY),
     );
     expect(menu.offers.map((o) => o.id)).toEqual(['shout', 'vote', 'fund', 'chaos']);
     expect(menu.offers.map((o) => o.effect.kind)).toEqual([
@@ -93,7 +104,7 @@ describe('authorMenu validates a whole menu and arranges it', () => {
   });
 
   it('treats an empty menu as valid — a builder with no offers yet is well-formed', () => {
-    const menu = value(authorMenu([]));
+    const menu = value(authorMenu([], POLICY));
     expect(menu.offers).toEqual([]);
   });
 
@@ -103,7 +114,7 @@ describe('authorMenu validates a whole menu and arranges it', () => {
         draft('ok', 100n, 'tip'),
         draft('', 50n, 'shoutout'), // blank id at position 1
         draft('also-ok', 0n, 'vote'), // non-positive price at position 2
-      ]),
+      ], POLICY),
     );
     expect(problems).toEqual([
       { kind: 'offer', at: 1, problem: { field: 'id', error: { kind: 'blank', label: 'offerId' } } },
@@ -121,7 +132,7 @@ describe('authorMenu validates a whole menu and arranges it', () => {
         draft('o1', 50n, 'shoutout'),
         draft('o2', 75n, 'tip'),
         draft('o1', 999n, 'fund-feature'), // same id as position 0
-      ]),
+      ], POLICY),
     );
     expect(problems).toEqual([{ kind: 'duplicate-id', id: 'o1', at: [0, 2] }]);
   });
@@ -134,7 +145,7 @@ describe('authorMenu validates a whole menu and arranges it', () => {
         draft('dup', 50n, 'shoutout'),
         draft('', 60n, 'tip'),
         draft('dup', 70n, 'vote'),
-      ]),
+      ], POLICY),
     );
     expect(problems).toEqual([
       { kind: 'offer', at: 1, problem: { field: 'id', error: { kind: 'blank', label: 'offerId' } } },
@@ -143,12 +154,83 @@ describe('authorMenu validates a whole menu and arranges it', () => {
   });
 });
 
+describe('maxOffers mints a cap only from a non-negative count', () => {
+  it('accepts zero and positive integers', () => {
+    expect(value(maxOffers(0))).toBe(0);
+    expect(value(maxOffers(100))).toBe(100);
+  });
+
+  it('rejects a negative cap — it would invert the guardrail into a total lockout', () => {
+    expect(error(maxOffers(-1))).toEqual({ kind: 'not-a-count', value: -1 });
+  });
+
+  it('rejects a fractional cap — a count of offers is a whole number', () => {
+    expect(error(maxOffers(2.5))).toEqual({ kind: 'not-a-count', value: 2.5 });
+  });
+});
+
+describe('authorMenu enforces the offer-count guardrail', () => {
+  /** A deliberately tight cap so a small fixture can exceed it. */
+  const tight: MenuPolicy = policy(2);
+
+  it('authors a menu at exactly the cap — the limit is inclusive', () => {
+    const menu = value(
+      authorMenu([draft('a', 10n, 'tip'), draft('b', 20n, 'tip')], tight),
+    );
+    expect(menu.offers.map((o) => o.id)).toEqual(['a', 'b']);
+  });
+
+  it('rejects a menu over the cap, reporting the limit and the actual count', () => {
+    const problems = error(
+      authorMenu(
+        [draft('a', 10n, 'tip'), draft('b', 20n, 'tip'), draft('c', 30n, 'tip')],
+        tight,
+      ),
+    );
+    expect(problems).toEqual([{ kind: 'too-many-offers', limit: 2, actual: 3 }]);
+  });
+
+  it('counts the submission, not the survivors — a flood of malformed drafts still trips the cap', () => {
+    // Each draft has exactly one fault (a blank id), so each is one `offer` problem;
+    // the count guardrail measures the submission regardless, and every fault — field
+    // and guardrail — comes back in the one pass.
+    const problems = error(
+      authorMenu([draft('', 10n, 'tip'), draft('', 20n, 'tip'), draft('', 30n, 'tip')], tight),
+    );
+    expect(problems).toContainEqual({ kind: 'too-many-offers', limit: 2, actual: 3 });
+    expect(problems.filter((p) => p.kind === 'offer')).toHaveLength(3);
+  });
+
+  it('treats an empty menu as valid even at a zero cap — zero offers does not exceed zero', () => {
+    const menu = value(authorMenu([], policy(0)));
+    expect(menu.offers).toEqual([]);
+  });
+
+  it('reports the count cap alongside field and duplicate faults in one pass', () => {
+    // One offer is malformed (blank id), two share an id, and the whole submission
+    // is over a cap of 2: a builder sees the structural faults AND the guardrail at once.
+    const problems = error(
+      authorMenu(
+        [draft('dup', 50n, 'shoutout'), draft('', 60n, 'tip'), draft('dup', 70n, 'vote')],
+        policy(2),
+      ),
+    );
+    expect(problems).toContainEqual({
+      kind: 'offer',
+      at: 1,
+      problem: { field: 'id', error: { kind: 'blank', label: 'offerId' } },
+    });
+    expect(problems).toContainEqual({ kind: 'duplicate-id', id: 'dup', at: [0, 2] });
+    expect(problems).toContainEqual({ kind: 'too-many-offers', limit: 2, actual: 3 });
+  });
+});
+
 describe('findOffer resolves the offer a backer chose', () => {
   const menu: Menu = value(
     authorMenu([
       draft('shout', 50n, 'shoutout'),
       draft('fund', 1000n, 'fund-feature'),
-    ]),
+    ], POLICY),
   );
 
   it('returns the one offer for an id present in the menu', () => {
