@@ -6,12 +6,11 @@
  * [LAW:one-way-deps].
  *
  * NOTE: `@crowdship/ledger-kernel` predates this package and carries its own
- * copies of `Brand`, `Result`, and `Timestamp`. That duplication is a known, transitional
- * divergence — when the ledger work resumes (it is paused pending the
- * adopt-an-engine decision) ledger-kernel should re-export these from here. It
- * is left alone for now deliberately, not by oversight: churning paused,
- * possibly-to-be-replaced money code to dedup two trivial type aliases would
- * trade real risk for little gain.
+ * copies of `Brand`, `Result`, and `Timestamp`. That duplication is a known,
+ * transitional divergence: ledger-kernel should re-export these from here. The
+ * engine decision it once waited on is settled (the ledger runs on TigerBeetle),
+ * so the remaining blocker is gone — this is now a small, safe cleanup left for a
+ * focused pass rather than smuggled into the engine adoption.
  */
 export type { Brand } from './brand.js';
 export type { Result } from './result.js';

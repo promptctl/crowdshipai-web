@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@crowdship/ledger-kernel": "workspace:*"
+    "@crowdship/ledger-kernel": "workspace:*",
+    "tigerbeetle-node": "0.17.7"
   }
 }

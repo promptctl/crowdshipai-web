@@ -205,9 +205,11 @@ want. Nothing else.
 
 Founding stage, building toward a shipped POC. There is a walking-skeleton web app
 (`apps/web`) — the visible experience, driven by an in-memory fake behind a single
-catalog seam — and early ledger code. This document is the source of truth for
-*intent*; build toward it, and update it when intent changes — never let it drift
-from what we're actually building.
+catalog seam — and a coin ledger that runs on **TigerBeetle** behind a `Ledger`
+seam (the engine owns balances, idempotency, and the no-overdraft rule; an
+in-memory fake stands in behind the same seam for fast tests). This document is the
+source of truth for *intent*; build toward it, and update it when intent changes —
+never let it drift from what we're actually building.
 
 <!-- BEGIN LIT INTEGRATION -->
 ## lit Agent-Native Workflow
