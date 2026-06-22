@@ -1,5 +1,6 @@
 import type { ActorRef, ConductAction, PolicyRuleId, PublishedSurface } from './ids.js';
 import type { MaturityLevel, MaturityRating } from './maturity.js';
+import type { HardLineVerdict } from './screening.js';
 import type { ActorStanding } from './standing.js';
 
 /**
@@ -23,8 +24,30 @@ export type PolicySubject =
       readonly kind: 'published-text';
       readonly author: ActorRef;
       readonly surface: PublishedSurface;
-      /** The exact text under review, verbatim — a rule (o97.6) inspects it. */
+      /** The exact text under review, verbatim — a rule inspects it. */
       readonly text: string;
+    }
+  | {
+      /**
+       * Author-published media becoming visible — the content axis for images and
+       * video, where the hard line (o97.6) lives. A SEPARATE arm from published-text,
+       * not a reshaping of it: text is judged on its verbatim body, media on a
+       * classifier's {@link HardLineVerdict} — different facts wanting different
+       * fields, so they are different arms, forkable, never one stretched over both
+       * [LAW:carrying-cost] [LAW:decomposition].
+       */
+      readonly kind: 'published-media';
+      readonly author: ActorRef;
+      readonly surface: PublishedSurface;
+      /**
+       * What a content classifier found about this media against the one hard line —
+       * a world-fact the edge produces by running the classifier (IO) and hands in,
+       * so the rule stays a pure read [LAW:effects-at-boundaries]. Required, never
+       * optional: media that reaches the boundary has been screened, and a clean pass
+       * is {@link CLEAR} (the baseline), never a missing field the rule must defend
+       * against [LAW:no-defensive-null-guards].
+       */
+      readonly verdict: HardLineVerdict;
     }
   | {
       /** An actor attempting an action — the conduct axis. */

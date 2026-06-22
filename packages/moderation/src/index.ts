@@ -36,6 +36,18 @@ export { IN_GOOD_STANDING } from './standing.js';
 export { createConductRule } from './conduct-rule.js';
 
 /**
+ * The hard line (o97.6): published media a classifier found `prohibited` is denied at
+ * the one boundary, with the verdict's reason. {@link HardLineVerdict} is the world-fact
+ * the rule reads, and the home of what the hard line forbids:
+ * a content classifier runs at the edge (IO) and hands its finding in on the
+ * `published-media` subject, the rule stays pure. {@link CLEAR} is the baseline a
+ * classifier hands in when it found nothing prohibited.
+ */
+export type { HardLineVerdict } from './screening.js';
+export { CLEAR } from './screening.js';
+export { createHardLineRule } from './hard-line-rule.js';
+
+/**
  * The moderation pipeline (o97.4): report, review, action — all recorded to one
  * append-only {@link AuditTrail}, the system of record. The trail is the single
  * source of truth for moderation history; the review queue and the incident
