@@ -2,11 +2,14 @@ import type { Clock, Result, Timestamp } from '@crowdship/std';
 import { timestamp } from '@crowdship/std';
 import type {
   Account,
+  Authenticated,
   AuthService,
   Email,
   LogInError,
   LoginGrant,
   Secret,
+  SessionError,
+  SessionToken,
   SignUpError,
 } from '@crowdship/identity';
 import { accountId, DEFAULT_ROLES, email, sessionId, sessionToken } from '@crowdship/identity';
@@ -70,6 +73,7 @@ export function anEmail(raw: string): Email {
 export interface AuthServiceCalls {
   readonly logIn: Array<{ readonly email: Email; readonly secret: Secret }>;
   readonly signUp: Array<{ readonly email: Email; readonly secret: Secret }>;
+  readonly resolveSession: Array<{ readonly token: SessionToken }>;
 }
 
 export interface RecordingAuthService {
@@ -78,18 +82,20 @@ export interface RecordingAuthService {
 }
 
 /**
- * A recording test double for {@link AuthService}: it remembers every `logIn` /
- * `signUp` it was asked to perform and answers with the response the test
- * configured. A call with no configured response throws — the fake never invents a
- * result, so "was scrypt reached?" is read directly off {@link AuthServiceCalls}
- * and an unconfigured call surfaces as a test bug rather than a silent default.
- * The lifecycle methods this edge never touches throw if reached [LAW:no-silent-failure].
+ * A recording test double for {@link AuthService}: it remembers every `logIn`,
+ * `signUp`, and `resolveSession` it was asked to perform and answers with the
+ * response the test configured. A call with no configured response throws — the
+ * fake never invents a result, so "was scrypt / the session resolver reached?" is
+ * read directly off {@link AuthServiceCalls} and an unconfigured call surfaces as a
+ * test bug rather than a silent default. The lifecycle methods neither the auth
+ * edge nor the request gate touch throw if reached [LAW:no-silent-failure].
  */
 export function recordingAuthService(responses: {
   readonly logIn?: Result<LoginGrant, LogInError>;
   readonly signUp?: Result<Account, SignUpError>;
+  readonly resolveSession?: Result<Authenticated, SessionError>;
 }): RecordingAuthService {
-  const calls: AuthServiceCalls = { logIn: [], signUp: [] };
+  const calls: AuthServiceCalls = { logIn: [], signUp: [], resolveSession: [] };
   const service: AuthService = {
     logIn(emailValue, secretValue) {
       calls.logIn.push({ email: emailValue, secret: secretValue });
@@ -101,8 +107,10 @@ export function recordingAuthService(responses: {
       if (responses.signUp === undefined) throw new Error('recordingAuthService: signUp called but no response configured');
       return Promise.resolve(responses.signUp);
     },
-    resolveSession() {
-      throw new Error('recordingAuthService: resolveSession not used by the auth edge');
+    resolveSession(token) {
+      calls.resolveSession.push({ token });
+      if (responses.resolveSession === undefined) throw new Error('recordingAuthService: resolveSession called but no response configured');
+      return Promise.resolve(responses.resolveSession);
     },
     logOut() {
       throw new Error('recordingAuthService: logOut not used by the auth edge');

@@ -51,6 +51,9 @@ export type {
 } from './channel-service.js';
 export { StandardChannelService } from './channel-service.js';
 
+export type { Principal } from './authz.js';
+export { mayManageChannel, isPlatformStaff, maySetVerification } from './authz.js';
+
 export type { Role, RoleSet, RoleError } from './roles.js';
 export {
   ROLES,
