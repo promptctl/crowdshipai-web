@@ -2,6 +2,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import {
   accountId,
   email,
+  role,
+  roleSet,
   sessionId,
   type Account,
   type AccountId,
@@ -9,6 +11,7 @@ import {
   type Email,
   type Recovery,
   type RecoveryToken,
+  type RoleSet,
   type Session,
   type SessionToken,
 } from '@crowdship/identity';
@@ -17,11 +20,34 @@ import { hashToken, orThrow, reqInt, reqStr } from './internal.js';
 
 type Row = Record<string, unknown>;
 
+/**
+ * A {@link RoleSet} at rest: the canonical roles joined by commas. Roles are a
+ * closed alphanumeric set with no commas, so the delimiter is unambiguous, and
+ * the set is already canonical so the stored string is too — one mailbox of
+ * capabilities maps to exactly one string [LAW:one-source-of-truth].
+ */
+const serializeRoles = (roles: RoleSet): string => roles.join(',');
+
+/**
+ * Rebuild a {@link RoleSet} from its stored form, halting loudly on any token
+ * that is not a known role [LAW:no-silent-failure] — a hand-edited or corrupt
+ * row is surfaced, never silently dropped to a smaller set. The empty string
+ * (the migration default for legacy rows) is an empty set, not an error.
+ */
+const parseRoles = (raw: string): RoleSet =>
+  roleSet(
+    raw
+      .split(',')
+      .filter((token) => token.length > 0)
+      .map((token) => orThrow(role(token), 'accounts.roles')),
+  );
+
 /** Rebuild an {@link Account} from its row, halting loudly if the durable record is malformed [LAW:no-silent-failure]. */
 const toAccount = (row: Row): Account => ({
   id: orThrow(accountId(reqStr(row, 'id')), 'accounts.id'),
   email: orThrow(email(reqStr(row, 'email')), 'accounts.email'),
   createdAt: orThrow(timestamp(reqInt(row, 'created_at')), 'accounts.created_at'),
+  roles: parseRoles(reqStr(row, 'roles')),
 });
 
 const toSession = (row: Row): Session => ({
@@ -57,19 +83,27 @@ export class SqliteAuthStore implements AuthStore {
 
   insertAccount(account: Account): Promise<void> {
     this.#db
-      .prepare('INSERT INTO accounts (id, email, created_at) VALUES (?, ?, ?)')
-      .run(account.id, account.email, account.createdAt);
+      .prepare('INSERT INTO accounts (id, email, created_at, roles) VALUES (?, ?, ?, ?)')
+      .run(account.id, account.email, account.createdAt, serializeRoles(account.roles));
     return Promise.resolve();
   }
 
   accountByEmail(address: Email): Promise<Account | undefined> {
-    const row = this.#db.prepare('SELECT id, email, created_at FROM accounts WHERE email = ?').get(address);
+    const row = this.#db.prepare('SELECT id, email, created_at, roles FROM accounts WHERE email = ?').get(address);
     return Promise.resolve(row === undefined ? undefined : toAccount(row));
   }
 
   accountById(id: AccountId): Promise<Account | undefined> {
-    const row = this.#db.prepare('SELECT id, email, created_at FROM accounts WHERE id = ?').get(id);
+    const row = this.#db.prepare('SELECT id, email, created_at, roles FROM accounts WHERE id = ?').get(id);
     return Promise.resolve(row === undefined ? undefined : toAccount(row));
+  }
+
+  updateRoles(id: AccountId, roles: RoleSet): Promise<void> {
+    // A row-targeted UPDATE: an absent account changes nothing rather than
+    // creating one, the same precondition the in-memory store honors. The
+    // service guarantees existence before calling.
+    this.#db.prepare('UPDATE accounts SET roles = ? WHERE id = ?').run(serializeRoles(roles), id);
+    return Promise.resolve();
   }
 
   putSession(token: SessionToken, session: Session): Promise<void> {

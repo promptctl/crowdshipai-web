@@ -166,6 +166,33 @@ describe('the durable seam composes: StandardAuthService on the SQLite stores', 
     expect((await svc.logIn(e, aSecret('new'))).ok).toBe(true);
   });
 
+  test('roles round-trip through SQLite and survive across store instances', async () => {
+    const db = openIdentityDb(':memory:');
+    const svc = new StandardAuthService({
+      clock: new SystemClock(),
+      ids: new CryptoIdMint(),
+      secrets: new CryptoSecretMint(),
+      credentials: new SqliteCredentialStore(db, FAST),
+      delivery: new NoopDelivery(),
+      store: new SqliteAuthStore(db),
+      sessionTtlMillis: 60_000,
+      recoveryTtlMillis: 30_000,
+    });
+    const e = must(email('roles@crowdship.dev'));
+    const created = must(await svc.signUp(e, aSecret('pw')));
+    expect(created.roles).toEqual(['backer']);
+    must(await svc.grantRole(created.id, 'recruiter'));
+    must(await svc.grantRole(created.id, 'builder'));
+
+    // A second store over the SAME handle has no in-process state — if it reads
+    // the full canonical capability set, it came from the database, not memory.
+    const reread = await new SqliteAuthStore(db).accountById(created.id);
+    expect(reread?.roles).toEqual(['backer', 'builder', 'recruiter']);
+
+    must(await svc.revokeRole(created.id, 'backer'));
+    expect((await new SqliteAuthStore(db).accountById(created.id))?.roles).toEqual(['builder', 'recruiter']);
+  });
+
   test('requesting recovery for an unknown mailbox delivers nothing and discloses nothing', async () => {
     const delivery = new NoopDelivery();
     const db = openIdentityDb(':memory:');

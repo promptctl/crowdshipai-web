@@ -36,7 +36,8 @@ export const openIdentityDb = (location: string): DatabaseSync => {
     CREATE TABLE IF NOT EXISTS accounts (
       id         TEXT    PRIMARY KEY,
       email      TEXT    NOT NULL UNIQUE,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      roles      TEXT    NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS credentials (
       account_id TEXT    PRIMARY KEY,
@@ -60,5 +61,22 @@ export const openIdentityDb = (location: string): DatabaseSync => {
       expires_at INTEGER NOT NULL
     );
   `);
+  migrateAddRolesColumn(db);
   return db;
+};
+
+/**
+ * Bring a pre-`roles` accounts table up to schema. `CREATE TABLE IF NOT EXISTS`
+ * never alters an existing table, so a database created before bb2.2 would lack
+ * the `roles` column and every account read would fail loudly. This adds it
+ * exactly once: guarded by the live column list so it is idempotent on a fresh
+ * database (where the CREATE already made the column) and a reversible, explicit
+ * migration on an old one [LAW:no-silent-failure]. Existing rows take the column
+ * default `''` — an empty {@link RoleSet}, the honest "we do not know this legacy
+ * account's capabilities", never a guessed default that silently grants one.
+ */
+const migrateAddRolesColumn = (db: DatabaseSync): void => {
+  const columns = db.prepare('PRAGMA table_info(accounts)').all();
+  const hasRoles = columns.some((column) => (column as { name?: unknown }).name === 'roles');
+  if (!hasRoles) db.exec("ALTER TABLE accounts ADD COLUMN roles TEXT NOT NULL DEFAULT ''");
 };

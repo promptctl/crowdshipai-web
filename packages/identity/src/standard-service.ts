@@ -1,9 +1,11 @@
 import type { Clock, Result, Timestamp } from '@crowdship/std';
 import { err, ok, timestamp } from '@crowdship/std';
 import type { Account } from './account.js';
-import type { LogInError, ResetError, SessionError, SignUpError } from './errors.js';
+import type { LogInError, ResetError, RoleChangeError, SessionError, SignUpError } from './errors.js';
 import { accountId } from './ids.js';
 import type { AccountId, Email, RecoveryToken, Secret, SessionToken } from './ids.js';
+import { DEFAULT_ROLES, withRole, withoutRole } from './roles.js';
+import type { Role, RoleSet } from './roles.js';
 import type {
   AuthService,
   CredentialStore,
@@ -75,6 +77,7 @@ export class StandardAuthService implements AuthService {
       id: this.#deps.ids.newAccountId(),
       email,
       createdAt: this.#deps.clock.now(),
+      roles: DEFAULT_ROLES,
     };
     // Set the credential before registering the account, so a failure to store
     // it leaves no orphan identity that nothing can authenticate as.
@@ -141,6 +144,32 @@ export class StandardAuthService implements AuthService {
     await this.#deps.store.deleteRecovery(token);
     await this.#deps.store.deleteSessionsOf(recovery.accountId);
     return ok(undefined);
+  }
+
+  async grantRole(id: AccountId, role: Role): Promise<Result<Account, RoleChangeError>> {
+    return this.#changeRoles(id, (roles) => withRole(roles, role));
+  }
+
+  async revokeRole(id: AccountId, role: Role): Promise<Result<Account, RoleChangeError>> {
+    return this.#changeRoles(id, (roles) => withoutRole(roles, role));
+  }
+
+  /**
+   * Load, transform, and persist an account's capabilities through one path, so
+   * grant and revoke differ only in the pure transform they pass — the same
+   * operations run either way [LAW:dataflow-not-control-flow]. The transform is
+   * idempotent, so re-granting or re-revoking writes a canonical-equal set and
+   * stays correct without a membership check.
+   */
+  async #changeRoles(
+    id: AccountId,
+    transform: (roles: RoleSet) => RoleSet,
+  ): Promise<Result<Account, RoleChangeError>> {
+    const account = await this.#deps.store.accountById(id);
+    if (account === undefined) return err({ kind: 'no-such-account' });
+    const roles = transform(account.roles);
+    await this.#deps.store.updateRoles(id, roles);
+    return ok({ ...account, roles });
   }
 
   async #openSession(account: Account): Promise<LoginGrant> {

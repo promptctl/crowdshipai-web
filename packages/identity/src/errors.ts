@@ -24,3 +24,10 @@ export type SessionError = { readonly kind: 'unknown' } | { readonly kind: 'expi
  * {@link LogInError}.
  */
 export type ResetError = { readonly kind: 'invalid-or-expired' };
+
+/**
+ * Granting or revoking a capability can fail only because the account does not
+ * exist — the role value itself cannot be wrong, since `Role` is a closed type
+ * the caller could not have constructed an illegal member of [LAW:types-are-the-program].
+ */
+export type RoleChangeError = { readonly kind: 'no-such-account' };

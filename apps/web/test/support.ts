@@ -9,7 +9,7 @@ import type {
   Secret,
   SignUpError,
 } from '@crowdship/identity';
-import { accountId, email, sessionId, sessionToken } from '@crowdship/identity';
+import { accountId, DEFAULT_ROLES, email, sessionId, sessionToken } from '@crowdship/identity';
 
 /**
  * Unwrap a `Result` in test setup, throwing loudly on the unexpected `err` rather
@@ -47,6 +47,7 @@ export function loginGrant(forEmail: Email): LoginGrant {
     id: must(accountId('acct-1')),
     email: forEmail,
     createdAt: must(timestamp(0)),
+    roles: DEFAULT_ROLES,
   };
   return {
     account,
@@ -111,6 +112,12 @@ export function recordingAuthService(responses: {
     },
     resetCredential() {
       throw new Error('recordingAuthService: resetCredential not used by the auth edge');
+    },
+    grantRole() {
+      throw new Error('recordingAuthService: grantRole not used by the auth edge');
+    },
+    revokeRole() {
+      throw new Error('recordingAuthService: revokeRole not used by the auth edge');
     },
   };
   return { service, calls };
