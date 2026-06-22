@@ -84,6 +84,9 @@ importers:
       '@crowdship/ledger-kernel':
         specifier: workspace:*
         version: link:../ledger-kernel
+      tigerbeetle-node:
+        specifier: 0.17.7
+        version: 0.17.7
 
   packages/ledger-kernel: {}
 
@@ -1049,6 +1052,10 @@ packages:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
 
+  tigerbeetle-node@0.17.7:
+    resolution: {integrity: sha512-YspqBNKxDrdzuzVLSTU6+KIeJgOatnYnfSXi5X6hSYZx5hIubyRgIG1F2YEvcBQimQo4B1imd8FuxzHp0JiirA==}
+    engines: {node: '>=18.0.0'}
+
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
 
@@ -1863,6 +1870,8 @@ snapshots:
   tailwindcss@4.3.1: {}
 
   tapable@2.3.3: {}
+
+  tigerbeetle-node@0.17.7: {}
 
   tinybench@2.9.0: {}
 

@@ -79,7 +79,7 @@ export interface LoginGrant {
  *
  * Every method is async because every real implementation is (database, hashing,
  * mail) — modeling it sync now would force a rewrite later, the same reasoning
- * the `LedgerStore` seam used.
+ * the ledger's `Ledger` seam uses.
  *
  * Inputs are already-validated domain values (`Email`, `Secret`), not raw
  * strings: parsing untrusted input is the constructors' job at the edge, so by

@@ -15,7 +15,8 @@ export interface Account {
 
 /**
  * The single source of truth for which kinds may go negative
- * [LAW:one-source-of-truth]. The kernel states the rule; the posting boundary
- * (which owns balances) is the one place that enforces it [LAW:single-enforcer].
+ * [LAW:one-source-of-truth]. The kernel states the rule; the settlement engine
+ * behind the `Ledger` seam is the one place that enforces it (TigerBeetle, via
+ * the no-overdraft account flag) [LAW:single-enforcer].
  */
 export const mayGoNegative = (kind: AccountKind): boolean => kind === 'mint';

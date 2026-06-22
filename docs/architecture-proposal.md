@@ -13,7 +13,7 @@ code is the **connective substrate** — the domain truth (coins, menu, settleme
 cut, policy) plus the seams that bind the adopted parts into a single product. This is
 not architectural taste; it is the founding requirement — *"swap things around without
 rewriting the app"* — restated as `[LAW:locality-or-seam]`. The repo already proves the
-pattern at small scale (`CrowdCatalog`, `LedgerStore`); the proposal is to apply it
+pattern at small scale (`CrowdCatalog`, the `Ledger` seam); the proposal is to apply it
 deliberately to every major piece.
 
 The research behind this doc already paid the dividend that validates the approach: it
@@ -47,7 +47,7 @@ is the entire bet, demonstrated before a line was written.
 |---|---|---|---|
 | **Video** | **Mux** (managed LL-HLS, ~2–5s) | "Watch someone code" is one-to-many screen-share, not conferencing. LL-HLS gives CDN reach + text legibility on a screen-share; a tip landing 2–3s after a keystroke is fine. Best DX. | Cloudflare Stream (cheaper egress) · Owncast (true self-host) · LiveKit *only if* builders ever pair-program live |
 | **Live chat / room events** | **Centrifugo** (OSS, self-host) | Simple pub/sub at thousands-per-room, low lock-in. Do NOT ride chat on video data channels — couples chat lifetime to the media session. | Ably (managed) · Stream Chat (chat+moderation off-the-shelf) |
-| **Coin ledger** | **TigerBeetle** | Double-entry, native two-phase escrow (Settlement needs it), built-in idempotency. Already seamed as `LedgerStore`. | Formance (MIT, Postgres) — same seam |
+| **Coin ledger** | **TigerBeetle** | Double-entry, native two-phase escrow (Settlement needs it), built-in idempotency, native no-overdraft via account flags. **Adopted** (ledger y38.5): a real TigerBeetle adapter sits behind the `Ledger` seam and the hand-rolled engine that duplicated it is deleted — the engine owns balances/idempotency/overdraft; an in-memory fake stands behind the same seam for tests. | Formance (MIT, Postgres) — same seam |
 | **Fiat on-ramp** (buy coins) | **Stripe** (Checkout/Payments) | Consensus startup default; credit the *internal* ledger on `payment_intent.succeeded`. The wallet is ours, never Stripe's balance. | Adyen at $10M+ volume |
 | **Payouts** (cash out coins) | **Stripe Connect — Express** | The one managed service that offloads KYC + 1099 filing + the money-transmitter problem at once, same vendor as the on-ramp. | Trolley/Tipalti for heavy international/1042-S tax volume |
 | **Auth crypto** | **Auth.js (NextAuth v5)** | Password/session/CSRF/recovery is solved; self-host, no lock-in, native to the Next.js app. This is ticket bb2.1, behind an Identity seam. | Any provider behind the same seam |
@@ -107,7 +107,7 @@ Each step is a thing real people can use:
    else assumes; unblocks payouts + ingest.
 2. **Video seam → Mux** + **Chat seam → Centrifugo**: a real builder streams, an audience
    watches and talks. *Watchable.*
-3. **Ledger adapter → TigerBeetle** behind the existing `LedgerStore` seam + **on-ramp →
+3. **Ledger adapter → TigerBeetle** behind the `Ledger` seam (done) + **on-ramp →
    Stripe**: backers buy coins. *The economy has fuel.*
 4. **PricedOffer fire path** (the dataflow spine): an offer fires, coins move, the room
    sees it. *Tippable. The MVP moment.*

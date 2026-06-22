@@ -22,12 +22,3 @@ export { mayGoNegative } from './account.js';
 
 export type { Transfer, TransferError } from './transfer.js';
 export { transfer } from './transfer.js';
-
-export type {
-  Entry,
-  NonEmptyArray,
-  Transaction,
-  TransactionError,
-  TransactionParams,
-} from './transaction.js';
-export { entriesOf, netEffect, signedEffect, transaction } from './transaction.js';

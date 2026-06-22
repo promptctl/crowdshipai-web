@@ -1,26 +1,15 @@
-export type { LedgerView, PostingRejection } from './posting.js';
-export { decidePosting } from './posting.js';
-
-export { foldBalances, resultingBalances } from './balances.js';
-
-export type { BalanceDrift, LedgerIntegrity } from './audit.js';
-export { auditLedger, LedgerIntegrityError } from './audit.js';
-
 export type {
-  IdempotencyConflict,
-  IdempotencyDecision,
-} from './idempotency.js';
-export { decideIdempotency } from './idempotency.js';
-
-export type { AccountConflict, LedgerStore } from './store.js';
-export { InMemoryLedgerStore } from './store.js';
-
-export type {
-  Clock,
-  LedgerCapabilities,
+  AccountConflict,
+  Ledger,
   PostError,
   PostReceipt,
   PostRequest,
-  TransactionIdSource,
-} from './ledger.js';
-export { createLedger, Ledger } from './ledger.js';
+} from './port.js';
+
+export { transactionIdOf } from './movement.js';
+
+export type { Clock } from './in-memory-ledger.js';
+export { createInMemoryLedger, InMemoryLedger } from './in-memory-ledger.js';
+
+export type { TigerBeetleConfig } from './tigerbeetle-ledger.js';
+export { createTigerBeetleLedger, TigerBeetleLedger } from './tigerbeetle-ledger.js';
