@@ -10,8 +10,18 @@
 export type { ActorRef, ConductAction, PolicyRuleId, PublishedSurface } from './ids.js';
 export { actorRef, conductAction, policyRuleId, publishedSurface } from './ids.js';
 
-export type { PolicyBoundary, PolicyDecision, PolicyRule, PolicySubject, PolicyViolation } from './boundary.js';
+export type {
+  PolicyBoundary,
+  PolicyDecision,
+  PolicyFinding,
+  PolicyGate,
+  PolicyRule,
+  PolicySubject,
+  PolicyViolation,
+} from './boundary.js';
 export { createPolicyBoundary } from './boundary.js';
+
+export { createMaturityGateRule } from './maturity-gate.js';
 
 export type { ContentDescriptor, MaturityLevel, MaturityRating, UnknownMaturityLevel } from './maturity.js';
 export {

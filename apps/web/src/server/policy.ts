@@ -1,4 +1,11 @@
-import { createPolicyBoundary, type PolicyBoundary, type PolicyRule } from '@crowdship/moderation';
+import {
+  createMaturityGateRule,
+  createPolicyBoundary,
+  policyRuleId,
+  type PolicyBoundary,
+  type PolicyRule,
+  type PolicyRuleId,
+} from '@crowdship/moderation';
 
 /**
  * The single place the web app holds its policy boundary [LAW:single-enforcer] —
@@ -14,12 +21,21 @@ import { createPolicyBoundary, type PolicyBoundary, type PolicyRule } from '@cro
  * maps onto stream's `ChannelRef`.
  */
 
-// The rule set is EMPTY today, and loudly so — there is no fake gate pretending to
-// enforce a policy that is not written yet [LAW:no-silent-failure]. The real rules
-// register here as their tickets land: the hard line (o97.6), conduct (o97.5),
-// maturity (o97.2), age-gating (o97.3). Adding one is a push to this array, never a
-// change to any caller of getPolicyBoundary() [LAW:locality-or-seam].
-const RULES: readonly PolicyRule[] = [];
+// A rule id is a non-blank label; minting one for a hard-coded rule can only fail by
+// programmer error, so we unwrap it loudly at boot rather than let a misconfigured
+// rule silently fall out of the boundary [LAW:no-silent-failure]. This is the one
+// composition point where rule ids are coined, as more rules land.
+const ruleId = (raw: string): PolicyRuleId => {
+  const id = policyRuleId(raw);
+  if (!id.ok) throw new Error(`policy: invalid rule id ${JSON.stringify(raw)}: ${JSON.stringify(id.error)}`);
+  return id.value;
+};
+
+// The rules register here as their tickets land — the hard line (o97.6), conduct
+// (o97.5) — each a push to this array, never a change to any caller of
+// getPolicyBoundary() [LAW:locality-or-seam]. The age gate (o97.3) is live: any
+// viewer-access subject routed through `decide` is gated by the content's rating.
+const RULES: readonly PolicyRule[] = [createMaturityGateRule(ruleId('maturity-gate'))];
 
 // One boundary per process. It is stateless — a pure decision over an immutable rule
 // set — so unlike the ingest broker it carries no session state to preserve across
