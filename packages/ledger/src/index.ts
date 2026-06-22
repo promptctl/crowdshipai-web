@@ -10,6 +10,7 @@ export type { AccountMovement, LedgerQuery, MovementDirection } from './query.js
 
 export type { NameStore } from './name-store.js';
 export { createInMemoryNameStore, InMemoryNameStore } from './name-store.js';
+export { createSqliteNameStore, SqliteNameStore } from './sqlite-name-store.js';
 
 export { transactionIdOf } from './movement.js';
 
