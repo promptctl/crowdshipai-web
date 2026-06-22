@@ -7,6 +7,7 @@ import { BuilderAvatar } from '@/components/BuilderAvatar';
 import { LiveBadge } from '@/components/LiveBadge';
 import { MaturityGate } from '@/components/MaturityGate';
 import { OfferCard } from '@/components/OfferCard';
+import { ReportChannel } from '@/components/ReportChannel';
 import { StreamStage } from '@/components/StreamStage';
 import { getCatalog } from '@/data/catalog';
 import type { StreamSummary } from '@/data/types';
@@ -91,6 +92,7 @@ export default async function ChannelPage({ params }: { readonly params: Promise
               <OfferCard key={offer.id} offer={offer} />
             ))}
           </div>
+          <ReportChannel target={stream.slug} />
         </div>
       </section>
     </main>

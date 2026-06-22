@@ -7,6 +7,7 @@ import {
   type PolicyDecision,
 } from '@crowdship/moderation';
 
+import { actorRefFor } from './actor-ref';
 import { getPolicyBoundary } from './policy';
 
 /**
@@ -38,13 +39,15 @@ const ANONYMOUS_VIEWER = 'anonymous-viewer';
  * Map a viewer onto moderation's opaque {@link ActorRef} at the one composition
  * point [LAW:decomposition] — the same move `getPolicyBoundary`'s doc names and
  * `server/sanctions` makes for an actor's standing. A logged-in viewer is named by
- * their account id, a logged-out one by the shared anonymous label. The id is
- * already a non-blank branded value and the anonymous label is a non-blank literal,
- * so a blank ref here is impossible-by-construction; we still unwrap loudly rather
- * than coerce, because a silently-empty actor ref would be a lie [LAW:no-silent-failure].
+ * their account id through the one principal→ref mapping [LAW:single-enforcer], a
+ * logged-out one by the shared anonymous label. The anonymous label is a non-blank
+ * literal, so a blank ref here is impossible-by-construction; we still unwrap loudly
+ * rather than coerce, because a silently-empty actor ref would be a lie
+ * [LAW:no-silent-failure].
  */
 const viewerRef = (principal: Principal | null): ActorRef => {
-  const ref = actorRef(principal === null ? ANONYMOUS_VIEWER : principal.id);
+  if (principal !== null) return actorRefFor(principal);
+  const ref = actorRef(ANONYMOUS_VIEWER);
   if (!ref.ok) throw new Error(`access: invalid actor ref: ${JSON.stringify(ref.error)}`);
   return ref.value;
 };
