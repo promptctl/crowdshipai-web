@@ -29,6 +29,9 @@ importers:
       '@crowdship/identity-node':
         specifier: workspace:*
         version: link:../../packages/identity-node
+      '@crowdship/rate-limit':
+        specifier: workspace:*
+        version: link:../../packages/rate-limit
       '@crowdship/std':
         specifier: workspace:*
         version: link:../../packages/std
@@ -89,6 +92,12 @@ importers:
         version: 0.17.7
 
   packages/ledger-kernel: {}
+
+  packages/rate-limit:
+    dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
 
   packages/std: {}
 
