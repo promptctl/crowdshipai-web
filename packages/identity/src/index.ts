@@ -32,5 +32,8 @@ export type {
   RecoveryDelivery,
 } from './service.js';
 
-export type { InMemoryAuthDeps } from './in-memory.js';
-export { InMemoryAuthService } from './in-memory.js';
+export type { AuthStore, Recovery } from './store.js';
+export { InMemoryAuthStore } from './store.js';
+
+export type { AuthServiceDeps, InMemoryAuthDeps } from './standard-service.js';
+export { StandardAuthService, InMemoryAuthService } from './standard-service.js';
