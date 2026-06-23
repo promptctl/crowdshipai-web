@@ -110,8 +110,14 @@ export interface ChannelView {
  * modeling it sync now would force a rewrite later.
  */
 export interface CrowdCatalog {
-  /** Every stream currently worth showing on the browse grid. */
-  liveStreams(): Promise<readonly StreamSummary[]>;
+  /**
+   * The full roster of builders worth surfacing — live and offline alike. Sorted
+   * live-first as a convenience for the browse grid, but it never filters: an
+   * offline builder's channel is still their resume, and the recruiter lens reads
+   * the whole roster. Named for what it returns, not the order it returns it in
+   * [FRAMING:representation] — a live-only read, if ever wanted, is a separate seam.
+   */
+  roster(): Promise<readonly StreamSummary[]>;
   /** The full watch context for one channel, or null if no such channel exists. */
   channel(slug: ChannelSlug): Promise<ChannelView | null>;
   /**

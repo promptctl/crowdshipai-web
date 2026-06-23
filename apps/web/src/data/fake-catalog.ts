@@ -208,8 +208,9 @@ const menuBySlug = new Map(SEED.map((b) => [b.slug, domainMenu(b.menu)]));
  * concrete type — callers depend on the seam, not the fake.
  */
 export const createFakeCatalog = (): CrowdCatalog => ({
-  liveStreams: () =>
-    // Live first, then by audience — the browse grid leads with what's happening now.
+  roster: () =>
+    // Every builder, live first then by audience — a sort, not a filter: offline
+    // builders stay in the roster (their channel is still a resume).
     Promise.resolve(
       [...SEED]
         .sort((a, b) => Number(b.isLive) - Number(a.isLive) || b.viewerCount - a.viewerCount)

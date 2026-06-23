@@ -5,13 +5,13 @@ import { getCatalog } from '@/data/catalog';
  * The recruiter lens (discovery-41w.5) — the third side of the market. A server
  * component that reads the full roster through the one catalog seam, the same
  * source the browse grid reads, then hands it to the board that applies the lens
- * [LAW:locality-or-seam]. It reads `liveStreams()` because that returns every
- * builder worth surfacing, offline included — a recruiter's shortlist is not
- * limited to who happens to be live this minute; an offline builder's channel is
- * still their resume.
+ * [LAW:locality-or-seam]. It reads `roster()` — the full set of builders worth
+ * surfacing, offline included — because a recruiter's shortlist is not limited to
+ * who happens to be live this minute; an offline builder's channel is still their
+ * resume.
  */
 export default async function TalentPage() {
-  const roster = await getCatalog().liveStreams();
+  const roster = await getCatalog().roster();
 
   return (
     <main className="mx-auto max-w-7xl px-5 py-8">

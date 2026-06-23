@@ -7,7 +7,7 @@ import { getCatalog } from '@/data/catalog';
  * from an in-memory fake or a real stream service [LAW:locality-or-seam].
  */
 export default async function BrowsePage() {
-  const streams = await getCatalog().liveStreams();
+  const streams = await getCatalog().roster();
   const liveCount = streams.filter((s) => s.isLive).length;
 
   return (
