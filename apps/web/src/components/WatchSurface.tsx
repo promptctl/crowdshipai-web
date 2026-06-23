@@ -220,22 +220,25 @@ export function WatchSurface({
   // sender's own line arrives back over the same SSE subscription every other watcher
   // reads, so what they see is the one broadcast under their public author, never a
   // private "you" line the rest of the audience cannot see [LAW:one-source-of-truth] —
-  // exactly how a fired effect already reaches them. The draft clears optimistically
-  // and is restored on any non-sent outcome, so a refused or too-long line is never
-  // lost [LAW:no-silent-failure].
+  // exactly how a fired effect already reaches them.
   const onSend = async () => {
     const text = draft.trim();
     if (text.length === 0) return;
     setDraft('');
+    // The draft clears optimistically; on a non-sent outcome we hand the line back
+    // ONLY if the input is still empty — so a refused or too-long line is never lost,
+    // yet a fresh line the viewer began typing during the round-trip is never
+    // clobbered [LAW:no-silent-failure].
+    const restoreDraft = () => setDraft((current) => (current.length === 0 ? text : current));
     try {
       const result = await sendChat(stream.slug, text);
       if (result.kind !== 'sent') {
-        setDraft(text);
+        restoreDraft();
         const next = chatNotice(result);
         if (next !== null) setNotice(next);
       }
     } catch {
-      setDraft(text);
+      restoreDraft();
       setNotice(UNCONFIRMED);
     }
   };
