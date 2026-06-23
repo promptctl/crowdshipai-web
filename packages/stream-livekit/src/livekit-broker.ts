@@ -35,6 +35,7 @@ export interface LiveKitRooms {
     departureTimeout?: number;
   }): Promise<Room>;
   listRooms(names?: string[]): Promise<Room[]>;
+  updateRoomMetadata(room: string, metadata: string): Promise<Room>;
   deleteRoom(room: string): Promise<void>;
 }
 
@@ -55,9 +56,12 @@ export const liveKitRooms = (httpUrl: string, apiKey: string, apiSecret: string)
  * tokens); `url` is the address livekit-client connects to (the provider's wss URL),
  * handed to the builder verbatim as the ingest endpoint. `publisherIdentity` is the
  * builder's stable participant identity for a channel — deterministic on purpose, so a
- * re-open evicts the prior connection under LiveKit's one-connection-per-identity rule,
- * which is how "a builder holds at most one open ingest" is ultimately enforced by the
- * provider [LAW:single-enforcer]. The timeouts are how long LiveKit keeps an idle room.
+ * re-open evicts the prior CONNECTION under LiveKit's one-connection-per-identity rule.
+ * Note the bound: that rule guarantees at most one live PUBLISHER, not at most one open
+ * ticket — `open`'s `already-live` refusal is a best-effort read-then-create (LiveKit's
+ * `createRoom` is idempotent, not exclusive, so concurrent opens can both succeed), and
+ * the provider is the final authority on who is actually broadcasting [LAW:single-enforcer].
+ * The timeouts are how long LiveKit keeps an idle room.
  */
 export interface LiveKitIngestDeps {
   readonly rooms: LiveKitRooms;
@@ -70,11 +74,14 @@ export interface LiveKitIngestDeps {
 }
 
 /**
- * The room a channel publishes into and viewers subscribe to. The opaque `ChannelRef`
- * IS the room name — the app already mints it room-name-safe at the one composition
- * point (the `ChannelRef` doc), so no second mapping is invented here [LAW:one-source-of-truth].
- * Exported so the viewer transport (evf.2.1) names the SAME room the builder publishes
- * to without re-deriving the rule.
+ * The room a channel publishes into and viewers subscribe to. The opaque `ChannelRef` is
+ * used VERBATIM as the room name — no second mapping is invented, so the room name has one
+ * source of truth [LAW:one-source-of-truth] and `readSession` can reconstruct the channel
+ * from `room.name` exactly. This makes room-name-safety a REQUIREMENT on the ChannelRef
+ * (a LiveKit room name is embedded in bearer tokens): the caller that mints a ChannelRef
+ * from a builder principal — the ingest-open flow, evf.1.2 — owns keeping it safe, the same
+ * composition point the `ChannelRef` doc names. Exported so the viewer transport (evf.2.1)
+ * names the SAME room the builder publishes to without re-deriving it.
  */
 export const roomNameOf = (channel: ChannelRef): string => channel;
 
@@ -109,18 +116,31 @@ const openedAtOf = (room: Room): Timestamp => {
   return at.value;
 };
 
-// A LiveKit failure is either the retryable arm (the provider was unreachable or
-// erroring on its side — the mirror of Stripe's gateway-unavailable) or a bug-class
-// fault (a bad key, an invalid request) that is rethrown loudly rather than disguised
-// as a transient outage [LAW:no-silent-failure].
-const isTransient = (cause: unknown): boolean =>
-  cause instanceof TwirpError ? cause.status >= 500 || cause.code === 'unavailable' : true;
+// The retryable arm — the provider was unreachable or erroring on its side, the mirror of
+// Stripe's gateway-unavailable — is a CLOSED set: a TwirpError the provider itself marks
+// retryable, or a network-level failure to reach it at all. Everything else (a bad key, a
+// malformed request, a programming bug like a TypeError) is NOT a transient outage and must
+// surface loudly rather than masquerade as one and retry forever — the same rethrow-the-
+// unrecognized discipline the Stripe binding uses, not an assume-transient default [LAW:no-silent-failure].
+const isProviderUnreachable = (cause: unknown): boolean => {
+  if (cause instanceof TwirpError) return cause.status >= 500 || cause.code === 'unavailable';
+  // A fetch that never reached the provider: undici throws a TypeError whose `cause` carries
+  // a Node system error code (ECONNREFUSED, ENOTFOUND, ETIMEDOUT, EAI_AGAIN, …); an aborted
+  // or timed-out request throws a DOMException named AbortError/TimeoutError.
+  if (cause instanceof Error) {
+    if (cause.name === 'AbortError' || cause.name === 'TimeoutError') return true;
+    const sysCode = (cause as { cause?: { code?: unknown } }).cause?.code;
+    if (typeof sysCode === 'string' && sysCode.startsWith('E')) return true;
+    if (cause.message.includes('fetch failed')) return true;
+  }
+  return false;
+};
 
 const isNotFound = (cause: unknown): boolean =>
   cause instanceof TwirpError && (cause.status === 404 || cause.code === 'not_found');
 
 const classifyOpen = (cause: unknown): OpenIngestError => {
-  if (isTransient(cause)) return { kind: 'provider-unavailable' };
+  if (isProviderUnreachable(cause)) return { kind: 'provider-unavailable' };
   throw cause;
 };
 
@@ -186,16 +206,23 @@ export const createLiveKitIngestBroker = (deps: LiveKitIngestDeps): IngestBroker
   ): Promise<Result<IngestTicket, OpenIngestError>> => {
     const name = roomNameOf(channel);
 
+    const metadata = JSON.stringify({ protocol });
     let created: Room;
     try {
       const existing = await sessionForRoom(name);
       if (existing !== null) return err({ kind: 'already-live', streamId: existing.id });
       created = await deps.rooms.createRoom({
         name,
-        metadata: JSON.stringify({ protocol }),
+        metadata,
         ...(deps.emptyTimeoutSeconds === undefined ? {} : { emptyTimeout: deps.emptyTimeoutSeconds }),
         ...(deps.departureTimeoutSeconds === undefined ? {} : { departureTimeout: deps.departureTimeoutSeconds }),
       });
+      // `createRoom` does NOT overwrite the metadata of a room that already exists (e.g. one
+      // an early viewer auto-created on join). If our metadata did not take, set it
+      // explicitly — otherwise the very next `forChannel` would read empty metadata and lie
+      // "not live" about a stream we just opened, and the viewer-join-before-builder-open
+      // order would silently corrupt state [LAW:no-ambient-temporal-coupling][LAW:no-silent-failure].
+      if (created.metadata !== metadata) created = await deps.rooms.updateRoomMetadata(name, metadata);
     } catch (cause) {
       return err(classifyOpen(cause));
     }

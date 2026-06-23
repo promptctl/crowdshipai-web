@@ -52,27 +52,41 @@ interface Created {
   readonly metadata?: string;
 }
 
+interface Updated {
+  readonly room: string;
+  readonly metadata: string;
+}
+
 /** A stub RoomService that records what the broker SENT and answers via the supplied
- *  behaviours, so a test can both assert the translation and control LiveKit's reply. */
+ *  behaviours, so a test can both assert the translation and control LiveKit's reply. The
+ *  default createRoom echoes the metadata back (as the real provider does for a fresh room),
+ *  so the happy path needs no metadata-repair call. */
 const stubRooms = (cfg: {
   list?: (names?: string[]) => Promise<Room[]>;
   create?: (name: string) => Promise<Room>;
+  update?: (room: string, metadata: string) => Promise<Room>;
   del?: (room: string) => Promise<void>;
-}): { rooms: LiveKitRooms; created: Created[]; deleted: string[] } => {
+}): { rooms: LiveKitRooms; created: Created[]; updated: Updated[]; deleted: string[] } => {
   const created: Created[] = [];
+  const updated: Updated[] = [];
   const deleted: string[] = [];
   const rooms: LiveKitRooms = {
     listRooms: (names) => (cfg.list ?? (() => Promise.resolve([])))(names),
     createRoom: (opts) => {
       created.push({ name: opts.name, ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }) });
-      return (cfg.create ?? ((n: string) => Promise.resolve(room({ name: n }))))(opts.name);
+      if (cfg.create) return cfg.create(opts.name);
+      return Promise.resolve(room({ name: opts.name, ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }) }));
+    },
+    updateRoomMetadata: (r, metadata) => {
+      updated.push({ room: r, metadata });
+      return (cfg.update ?? ((rr: string, mm: string) => Promise.resolve(room({ name: rr, metadata: mm }))))(r, metadata);
     },
     deleteRoom: (r) => {
       deleted.push(r);
       return (cfg.del ?? (() => Promise.resolve()))(r);
     },
   };
-  return { rooms, created, deleted };
+  return { rooms, created, updated, deleted };
 };
 
 /** A stub signer that records every claim and returns a deterministic fake token, so a
@@ -141,6 +155,30 @@ describe('open', () => {
     ]);
   });
 
+  it('repairs metadata when the room already existed without it (an early viewer auto-created it)', async () => {
+    // The already-live check sees a metadata-less room → not a session → open proceeds.
+    // createRoom returns that same metadata-less room (the real provider does not overwrite
+    // an existing room's metadata), so the broker must set it explicitly.
+    const { rooms, updated } = stubRooms({
+      list: () => Promise.resolve([room({ name: 'alice', metadata: '' })]),
+      create: () => Promise.resolve(room({ name: 'alice', metadata: '' })),
+    });
+    const { sign } = stubSigner();
+    const result = await broker(rooms, sign).open(ALICE, 'whip');
+
+    expect(result.ok).toBe(true);
+    expect(must(result).session.protocol).toBe('whip');
+    // It repaired the metadata so a later forChannel won't lie "not live".
+    expect(updated).toEqual([{ room: 'alice', metadata: JSON.stringify({ protocol: 'whip' }) }]);
+  });
+
+  it('does not touch metadata when createRoom already applied it (the fresh-room path)', async () => {
+    const { rooms, updated } = stubRooms({ list: () => Promise.resolve([]) });
+    const { sign } = stubSigner();
+    await broker(rooms, sign).open(ALICE, 'whip');
+    expect(updated).toEqual([]);
+  });
+
   it('refuses a second open while the channel is already provisioned (already-live)', async () => {
     const { rooms, created } = stubRooms({ list: () => Promise.resolve([room({ name: 'alice' })]) });
     const { sign } = stubSigner();
@@ -167,6 +205,25 @@ describe('open', () => {
     const { rooms } = stubRooms({ list: () => Promise.reject(new TwirpError('Unauthenticated', 'bad key', 401)) });
     const { sign } = stubSigner();
     await expect(broker(rooms, sign).open(ALICE, 'whip')).rejects.toThrow(/bad key/);
+  });
+
+  it('maps a network-level failure to reach the provider to provider-unavailable', async () => {
+    // undici throws a TypeError 'fetch failed' whose cause carries a Node system error code.
+    const netError = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+    const { rooms } = stubRooms({ list: () => Promise.reject(netError) });
+    const { sign } = stubSigner();
+    const result = await broker(rooms, sign).open(ALICE, 'whip');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toEqual({ kind: 'provider-unavailable' });
+  });
+
+  it('rethrows an unrecognized programming error instead of disguising it as an outage', async () => {
+    // A plain bug with no network markers must surface loudly, not retry forever as transient.
+    const { rooms } = stubRooms({ list: () => Promise.reject(new TypeError('cannot read properties of undefined')) });
+    const { sign } = stubSigner();
+    await expect(broker(rooms, sign).open(ALICE, 'whip')).rejects.toThrow(/cannot read properties/);
   });
 });
 
