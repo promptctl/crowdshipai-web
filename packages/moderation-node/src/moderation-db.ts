@@ -1,14 +1,4 @@
-import { createRequire } from 'node:module';
-
-// `node:sqlite` is newer than most bundlers' built-ins lists (Vite, vite-node),
-// which strip the `node:` prefix and then fail to resolve a bare `sqlite`. Loading
-// it through a runtime require bound to this file bypasses static analysis, so the
-// real Node built-in is resolved at run time under every bundler — types still come
-// from `@types/node` via the `typeof import(...)` annotation [LAW:no-silent-failure].
-// This is the third instance of the idiom (identity-node and ledger hold the others);
-// platform-92o folds all three into one shared node-runtime home.
-const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
-type DatabaseSync = import('node:sqlite').DatabaseSync;
+import { DatabaseSync } from '@crowdship/node-std';
 
 /**
  * Opens the moderation database and brings its schema into existence — the single

@@ -108,6 +108,9 @@ importers:
       '@crowdship/identity':
         specifier: workspace:*
         version: link:../identity
+      '@crowdship/node-std':
+        specifier: workspace:*
+        version: link:../node-std
       '@crowdship/std':
         specifier: workspace:*
         version: link:../std
@@ -117,6 +120,9 @@ importers:
       '@crowdship/ledger-kernel':
         specifier: workspace:*
         version: link:../ledger-kernel
+      '@crowdship/node-std':
+        specifier: workspace:*
+        version: link:../node-std
       tigerbeetle-node:
         specifier: 0.17.7
         version: 0.17.7
@@ -144,6 +150,15 @@ importers:
       '@crowdship/moderation':
         specifier: workspace:*
         version: link:../moderation
+      '@crowdship/node-std':
+        specifier: workspace:*
+        version: link:../node-std
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+
+  packages/node-std:
+    dependencies:
       '@crowdship/std':
         specifier: workspace:*
         version: link:../std

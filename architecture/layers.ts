@@ -27,9 +27,14 @@ export const LAYERS = [
       'Pure logic — domain truth and cross-cutting capability alike, vendor- and framework-free. May depend only on foundation.',
   },
   {
+    id: 'runtime',
+    description:
+      "Shared node-runtime primitives the adapters stand on — the platform's own built-ins (node:sqlite behind a bundler-safe loader) and the trust-boundary readers over their rows. Depends only on foundation; sitting ABOVE the framework-free cores means a core that DEPENDS ON this package is an illegal upward edge (the graph enforcer checks @crowdship/* dependency edges — it does not police a core importing a raw node: builtin directly; that would want a lint rule).",
+  },
+  {
     id: 'adapter',
     description:
-      'Binds an adopted runtime or vendor to a core behind a seam (node/sqlite, TigerBeetle). May depend on cores and foundation.',
+      'Binds an adopted runtime or vendor to a core behind a seam (node/sqlite, TigerBeetle). May depend on the runtime primitives, cores, and foundation.',
   },
   {
     id: 'service',
@@ -58,6 +63,8 @@ const ASSIGN: Readonly<Record<string, RepoLayerId>> = {
   '@crowdship/rate-limit': 'core',
   '@crowdship/settlement': 'core',
   '@crowdship/stream': 'core',
+
+  '@crowdship/node-std': 'runtime',
 
   '@crowdship/identity-node': 'adapter',
   '@crowdship/ledger': 'adapter',

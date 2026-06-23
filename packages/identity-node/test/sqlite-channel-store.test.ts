@@ -1,9 +1,9 @@
-import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 
+import { DatabaseSync } from '@crowdship/node-std';
 import type { Result } from '@crowdship/std';
 import { timestamp } from '@crowdship/std';
 import {
@@ -208,12 +208,6 @@ describe('SqliteChannelStore: claiming a channel persists it and grants builder 
     ).rejects.toThrow(/UNIQUE/);
   });
 });
-
-/**
- * `node:sqlite` is loaded through a runtime require for the same reason
- * `identity-db.ts` does it — vite-node strips the `node:` prefix at analysis time.
- */
-const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
 describe('the verification column migrates onto a pre-bb2.4 channels table', () => {
   let dir: string | undefined;

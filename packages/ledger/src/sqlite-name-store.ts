@@ -1,28 +1,9 @@
 import { mkdirSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 
-import type { NameStore } from './name-store.js';
+import { DatabaseSync, reqStr, type StatementSync } from '@crowdship/node-std';
 
-// `node:sqlite` is the one SQLite engine this codebase uses — the zero-dependency,
-// no-native-compile engine that ships inside the runtime — chosen here over adding a
-// second SQLite binding [LAW:one-type-per-behavior]. It is newer than most bundlers'
-// built-ins lists, which strip the `node:` prefix and then fail to resolve a bare
-// `sqlite`; loading it through a runtime require bound to this file bypasses static
-// analysis so the real built-in resolves under every bundler, while types still come
-// from `@types/node` via the `typeof import(...)` annotation. It is a
-// stable-but-experimental built-in and emits one ExperimentalWarning on first use,
-// accepted deliberately.
-//
-// The same loader idiom also lives in the identity stores. That is a deliberate,
-// transitional duplication: the engine choice is one behaviour, but its only correct
-// home is a shared node-runtime package that does not yet exist — `std` and the
-// ledger kernel are both intentionally node-free and may not host it [LAW:one-way-deps].
-// Extracting it is a small focused cross-package pass, not something to smuggle into a
-// ledger ticket — the same call this repo already makes for its other cross-package
-// primitive duplication.
-const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
-type DatabaseSync = import('node:sqlite').DatabaseSync;
+import type { NameStore } from './name-store.js';
 
 /**
  * The durable, cross-process {@link NameStore}: the same fingerprint→string
@@ -44,8 +25,8 @@ type DatabaseSync = import('node:sqlite').DatabaseSync;
  */
 export class SqliteNameStore implements NameStore {
   readonly #db: DatabaseSync;
-  readonly #insert: import('node:sqlite').StatementSync;
-  readonly #select: import('node:sqlite').StatementSync;
+  readonly #insert: StatementSync;
+  readonly #select: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#db = db;
@@ -99,16 +80,6 @@ export class SqliteNameStore implements NameStore {
 // caller asked for.
 const toKey = (fingerprint: bigint): string => fingerprint.toString(16);
 const fromKey = (key: string): bigint => BigInt(`0x${key}`);
-
-// Read a column that must be a string; anything else is a corrupt durable record,
-// halted loudly rather than smuggled onward as a malformed name [LAW:no-silent-failure].
-const reqStr = (row: unknown, column: string): string => {
-  const value = (row as Record<string, unknown>)[column];
-  if (typeof value !== 'string') {
-    throw new Error(`sqlite-name-store: column ${column} is not a string: ${JSON.stringify(value)}`);
-  }
-  return value;
-};
 
 /**
  * Opens (creating if absent) a durable {@link SqliteNameStore} at `location`, a

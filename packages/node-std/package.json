@@ -1,5 +1,5 @@
 {
-  "name": "@crowdship/identity-node",
+  "name": "@crowdship/node-std",
   "version": "0.0.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -8,8 +8,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@crowdship/identity": "workspace:*",
-    "@crowdship/node-std": "workspace:*",
     "@crowdship/std": "workspace:*"
   }
 }
