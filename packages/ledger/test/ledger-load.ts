@@ -13,11 +13,12 @@ import {
   type Transfer,
   type TransactionReason,
 } from '@crowdship/ledger-kernel';
+import { show } from '@crowdship/std';
 
 import type { Ledger, PostError, PostReceipt } from '../src/index.js';
 
 const must = <T>(r: Result<T, unknown>): T => {
-  if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
+  if (!r.ok) throw new Error(`expected ok, got error: ${show(r.error)}`);
   return r.value;
 };
 

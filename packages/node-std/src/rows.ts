@@ -12,7 +12,7 @@
  * duplicated into the text.
  */
 
-import { show } from './format.js';
+import { show } from '@crowdship/std';
 
 /** A row read back from a query — every column an untrusted value until checked. */
 type Row = Record<string, unknown>;

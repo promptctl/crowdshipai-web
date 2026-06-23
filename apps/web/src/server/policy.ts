@@ -8,6 +8,7 @@ import {
   type PolicyRule,
   type PolicyRuleId,
 } from '@crowdship/moderation';
+import { show } from '@crowdship/std';
 
 /**
  * The single place the web app holds its policy boundary [LAW:single-enforcer] —
@@ -29,7 +30,7 @@ import {
 // composition point where rule ids are coined, as more rules land.
 const ruleId = (raw: string): PolicyRuleId => {
   const id = policyRuleId(raw);
-  if (!id.ok) throw new Error(`policy: invalid rule id ${JSON.stringify(raw)}: ${JSON.stringify(id.error)}`);
+  if (!id.ok) throw new Error(`policy: invalid rule id ${show(raw)}: ${show(id.error)}`);
   return id.value;
 };
 

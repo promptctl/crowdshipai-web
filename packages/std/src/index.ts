@@ -22,3 +22,4 @@ export type { CoinAmount, CoinAmountError } from './money.js';
 export { coinAmount } from './money.js';
 export type { BlankError } from './nonblank.js';
 export { nonBlank } from './nonblank.js';
+export { show } from './format.js';

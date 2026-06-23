@@ -1,4 +1,5 @@
 import type { Clock, Timestamp } from '@crowdship/std';
+import { show } from '@crowdship/std';
 
 import type { PolicyDecision, PolicySubject } from './boundary.js';
 import type { EntryId } from './ids.js';
@@ -86,7 +87,7 @@ export const createInMemoryAuditTrail = (deps: AuditTrailDeps): AuditTrail => {
       // two entries and collapse two incidents into one, so a colliding minter fails
       // loudly here instead of corrupting the record silently [LAW:no-silent-failure].
       if (log.some((e) => e.id === id)) {
-        throw new Error(`audit trail: minter returned a duplicate entry id ${JSON.stringify(id)}`);
+        throw new Error(`audit trail: minter returned a duplicate entry id ${show(id)}`);
       }
       const recorded: RecordedEvent = { id, at: deps.clock.now(), event };
       log.push(recorded);

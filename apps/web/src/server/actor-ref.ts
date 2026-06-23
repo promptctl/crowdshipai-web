@@ -1,5 +1,6 @@
 import type { Principal } from '@crowdship/identity';
 import { actorRef, type ActorRef } from '@crowdship/moderation';
+import { show } from '@crowdship/std';
 
 /**
  * The one place the web app names an authenticated principal to moderation
@@ -18,6 +19,6 @@ import { actorRef, type ActorRef } from '@crowdship/moderation';
  */
 export const actorRefFor = (principal: Principal): ActorRef => {
   const ref = actorRef(principal.id);
-  if (!ref.ok) throw new Error(`actor-ref: invalid actor ref: ${JSON.stringify(ref.error)}`);
+  if (!ref.ok) throw new Error(`actor-ref: invalid actor ref: ${show(ref.error)}`);
   return ref.value;
 };

@@ -1,5 +1,5 @@
 import type { Clock, Result, Timestamp } from '@crowdship/std';
-import { err, ok, timestamp } from '@crowdship/std';
+import { err, ok, show, timestamp } from '@crowdship/std';
 import type { Account } from './account.js';
 import type { LogInError, ResetError, RoleChangeError, SessionError, SignUpError } from './errors.js';
 import { accountId } from './ids.js';
@@ -188,7 +188,7 @@ export class StandardAuthService implements AuthService {
   #after(millis: number): Timestamp {
     const at = timestamp(this.#deps.clock.now() + millis);
     if (!at.ok) {
-      throw new Error(`identity misconfiguration: ttl produced an invalid timestamp: ${JSON.stringify(at.error)}`);
+      throw new Error(`identity misconfiguration: ttl produced an invalid timestamp: ${show(at.error)}`);
     }
     return at.value;
   }
