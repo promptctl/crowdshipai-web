@@ -72,6 +72,7 @@ const ASSIGN: Readonly<Record<string, RepoLayerId>> = {
   '@crowdship/ledger': 'adapter',
   '@crowdship/moderation-node': 'adapter',
   '@crowdship/payments-stripe': 'adapter',
+  '@crowdship/stream-livekit': 'adapter',
 
   '@crowdship/on-ramp': 'service',
   '@crowdship/pool': 'service',
