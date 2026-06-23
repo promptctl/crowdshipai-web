@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { WatchSurface } from '@/components/WatchSurface';
 import { getCatalog } from '@/data/catalog';
 import { walletBalance } from '@/server/market-actions';
+import { getPresenceRegistry, presenceTopicOf } from '@/server/presence';
 import { currentPrincipal } from '@/server/principal';
 
 /**
@@ -16,6 +17,12 @@ import { currentPrincipal } from '@/server/principal';
  * they do not have. Whether a session backs the request is read from the same edge
  * and handed down as `signedIn`, so the chat input reflects who may speak; the send
  * action remains the real authenticator [LAW:single-enforcer].
+ *
+ * The viewer count is seeded from the presence registry — its authoritative source of
+ * truth [LAW:one-source-of-truth], read here at the edge — so the first paint shows
+ * the real occupancy (the viewers already watching, before this one connects), not the
+ * catalog's static summary figure. The surface then keeps it live off the feed: this
+ * viewer's own connection joins presence and the count ticks up to include them.
  */
 export default async function WatchPage({ params }: { readonly params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -25,6 +32,7 @@ export default async function WatchPage({ params }: { readonly params: Promise<{
     <WatchSurface
       channel={channel}
       initialBalance={await walletBalance()}
+      initialViewerCount={getPresenceRegistry().countOf(presenceTopicOf(slug))}
       signedIn={(await currentPrincipal()) !== null}
     />
   );

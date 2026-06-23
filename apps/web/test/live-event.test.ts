@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   CHAT_MESSAGE_EVENT,
   EFFECT_FIRED_EVENT,
+  PRESENCE_EVENT,
   parseChatMessage,
   parseFiredEffect,
+  parseViewerPresence,
 } from '../src/data/live-event';
 
 /**
@@ -111,17 +113,66 @@ describe('parseChatMessage', () => {
   });
 });
 
-/**
- * The two sibling parsers read the same wire but never claim each other's frames:
- * each is honest optionality for the OTHER's event type, so the consume edge can try
- * both and route by which one claims the frame [LAW:no-silent-failure].
- */
-describe('the sibling parsers stay in their lanes', () => {
-  it('parseFiredEffect does not claim a chat frame', () => {
-    expect(parseFiredEffect(chatFrame('mara', 'hi'))).toBeNull();
+/** The exact event shape the publish edge (`announcePresence`) puts on the wire: the
+ *  open presence type label, a publisher-stamped `at`, and the `{count}` payload the
+ *  watcher renders as the live viewer count. Built here verbatim so this test fails
+ *  loudly if the two halves of the seam ever drift apart [LAW:one-source-of-truth]. */
+const presenceFrame = (count: number): string =>
+  JSON.stringify({ type: PRESENCE_EVENT, at: 1_700_000_000_000, payload: { count } });
+
+describe('parseViewerPresence', () => {
+  it('reads the count from a faithful presence frame', () => {
+    expect(parseViewerPresence(presenceFrame(42))).toEqual({ count: 42 });
   });
 
-  it('parseChatMessage does not claim a fired-effect frame', () => {
+  it('reads a zero count — an empty stream is a real audience size, not a missing one', () => {
+    expect(parseViewerPresence(presenceFrame(0))).toEqual({ count: 0 });
+  });
+
+  it('is null for a garbled, non-JSON frame from the wire', () => {
+    expect(parseViewerPresence('not json at all')).toBeNull();
+  });
+
+  it('is null for a JSON value that is not an event object', () => {
+    expect(parseViewerPresence('"just a string"')).toBeNull();
+    expect(parseViewerPresence('[1,2,3]')).toBeNull();
+    expect(parseViewerPresence('null')).toBeNull();
+  });
+
+  it('is null when the payload is missing or not an object', () => {
+    expect(parseViewerPresence(JSON.stringify({ type: PRESENCE_EVENT, at: 1 }))).toBeNull();
+    expect(parseViewerPresence(JSON.stringify({ type: PRESENCE_EVENT, at: 1, payload: 'x' }))).toBeNull();
+  });
+
+  it('is null when the count is not a whole, non-negative number of people', () => {
+    const frame = (count: unknown): string =>
+      JSON.stringify({ type: PRESENCE_EVENT, at: 1, payload: { count } });
+    expect(parseViewerPresence(frame('7'))).toBeNull();
+    expect(parseViewerPresence(frame(-1))).toBeNull();
+    expect(parseViewerPresence(frame(2.5))).toBeNull();
+    expect(parseViewerPresence(frame(Number.NaN))).toBeNull();
+    expect(parseViewerPresence(JSON.stringify({ type: PRESENCE_EVENT, at: 1, payload: {} }))).toBeNull();
+  });
+});
+
+/**
+ * The three sibling parsers read the same wire but never claim each other's frames:
+ * each is honest optionality for the OTHERS' event types, so the consume edge can try
+ * them in turn and route by which one claims the frame [LAW:no-silent-failure].
+ */
+describe('the sibling parsers stay in their lanes', () => {
+  it('parseFiredEffect does not claim a chat or presence frame', () => {
+    expect(parseFiredEffect(chatFrame('mara', 'hi'))).toBeNull();
+    expect(parseFiredEffect(presenceFrame(3))).toBeNull();
+  });
+
+  it('parseChatMessage does not claim a fired-effect or presence frame', () => {
     expect(parseChatMessage(firedFrame('shoutout'))).toBeNull();
+    expect(parseChatMessage(presenceFrame(3))).toBeNull();
+  });
+
+  it('parseViewerPresence does not claim a fired-effect or chat frame', () => {
+    expect(parseViewerPresence(firedFrame('shoutout'))).toBeNull();
+    expect(parseViewerPresence(chatFrame('mara', 'hi'))).toBeNull();
   });
 });

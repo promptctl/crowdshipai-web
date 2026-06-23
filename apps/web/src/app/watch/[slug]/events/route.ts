@@ -1,6 +1,8 @@
 import type { LiveSubscription } from '@crowdship/live-feed';
+import type { PresenceHandle } from '@crowdship/presence';
 
-import { getLiveFeed, liveTopicOf } from '@/server/live-feed';
+import { announcePresence, getLiveFeed, liveTopicOf } from '@/server/live-feed';
+import { getPresenceRegistry, presenceTopicOf } from '@/server/presence';
 
 /**
  * The watch surface's real-time transport edge: a Server-Sent-Events stream of one
@@ -8,10 +10,18 @@ import { getLiveFeed, liveTopicOf } from '@/server/live-feed';
  * publish half (a fired offer announcing onto the same topic) is already live in
  * `buyOffer`. A viewer's browser opens an `EventSource` here; every {@link LiveEvent}
  * published to the builder's topic is written down the wire as JSON, verbatim
- * [LAW:effects-at-boundaries] — this edge is a dumb pipe, it never interprets the
- * payload, so it carries EVERY event type the feed grows (presence, chat, settlement)
- * through this one route with no change [LAW:no-mode-explosion]. The client decides
- * what each event means.
+ * [LAW:effects-at-boundaries] — this edge is a dumb pipe for payloads, it never
+ * interprets them, so it carries EVERY event type the feed grows (presence, chat,
+ * settlement) through this one route with no change [LAW:no-mode-explosion]. The
+ * client decides what each event means.
+ *
+ * This same connection IS one viewer's presence: it opens when they start watching
+ * and closes when they leave, so the route — already the one owner of the connection's
+ * lifecycle — is exactly where that viewer is marked present and absent
+ * [LAW:no-ambient-temporal-coupling]. Presence is not a payload this pipe interprets;
+ * it is the pipe's own occupancy. The authoritative count lives in the presence
+ * registry; this route only joins/leaves it and announces the registry's derived
+ * count back onto the feed for every watcher [LAW:one-source-of-truth].
  *
  * It is LIVE, not history: the subscription receives only events published after it
  * attaches, and the feed stores nothing. A viewer who joins mid-stream sees effects
@@ -40,6 +50,8 @@ export async function GET(
   const { slug } = await params;
   const topic = liveTopicOf(slug);
   const feed = getLiveFeed();
+  const presenceTopic = presenceTopicOf(slug);
+  const registry = getPresenceRegistry();
 
   // The connection's lifecycle has one explicit owner: the request's abort signal.
   // Subscribe when the stream starts; close the subscription and the stream the
@@ -47,6 +59,20 @@ export async function GET(
   // [LAW:no-ambient-temporal-coupling]. `close()` is idempotent, so the abort path
   // and the consumer-cancel path can both call it safely.
   let subscription: LiveSubscription | null = null;
+  let presence: PresenceHandle | null = null;
+
+  // One viewer leaves exactly once: release their presence and announce the now-lower
+  // count to everyone still watching. The runtime tears a dropped connection down
+  // through two paths (the abort signal and the pipe's own cancel) in an order we do
+  // not own, so this is guarded to release and announce a single departure once — the
+  // same single-owner discipline the controller close below uses [LAW:no-ambient-temporal-coupling].
+  let left = false;
+  const leave = () => {
+    if (left) return;
+    left = true;
+    presence?.release();
+    void announcePresence(slug, registry.countOf(presenceTopic));
+  };
 
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -54,7 +80,14 @@ export async function GET(
       // An opening comment flushes the response headers promptly so the client's
       // `EventSource` reaches its open state before the first real event arrives.
       controller.enqueue(encoder.encode(': connected\n\n'));
+      // Mark this viewer present AFTER subscribing, so the count this join announces
+      // fans out to their own just-attached subscription too: they see themselves
+      // counted, and so does everyone already watching. The order is the route's to
+      // own, not an accident of callback timing [LAW:no-ambient-temporal-coupling].
+      presence = registry.join(presenceTopic);
+      void announcePresence(slug, registry.countOf(presenceTopic));
       request.signal.addEventListener('abort', () => {
+        leave();
         subscription?.close();
         // The runtime tears a disconnected stream down through two independent paths
         // (this abort signal and the response pipe's own cancel), and their order is
@@ -65,6 +98,7 @@ export async function GET(
       });
     },
     cancel() {
+      leave();
       subscription?.close();
     },
   });

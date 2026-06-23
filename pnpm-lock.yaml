@@ -53,6 +53,9 @@ importers:
       '@crowdship/payments':
         specifier: workspace:*
         version: link:../../packages/payments
+      '@crowdship/presence':
+        specifier: workspace:*
+        version: link:../../packages/presence
       '@crowdship/purchase':
         specifier: workspace:*
         version: link:../../services/purchase
@@ -192,6 +195,12 @@ importers:
       stripe:
         specifier: 22.2.2
         version: 22.2.2(@types/node@22.19.21)
+
+  packages/presence:
+    dependencies:
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
 
   packages/rate-limit:
     dependencies:
