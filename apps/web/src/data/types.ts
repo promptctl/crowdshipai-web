@@ -79,9 +79,15 @@ export interface ChatMessage {
   readonly id: string;
   readonly author: string;
   readonly text: string;
-  /** Present when this line is a fired offer rather than typed text — so a fired
-   * effect and an ordinary message stay one type, not two parallel systems. */
-  readonly firedOfferLabel?: string;
+  /** Present when this line is a fired EFFECT rather than typed text — so a fired
+   * effect and an ordinary message stay one type, not two parallel systems
+   * [LAW:one-type-per-behavior]. It holds the effect's open KIND (the builder-authored
+   * domain label the live channel carries: `shoutout`, `poll-vote`, …), not a
+   * view-layer offer label — the broadcast carries domain truth, never frontend prose
+   * [LAW:one-way-deps]. The field's name says exactly what it holds, so a future reader
+   * wiring a producer or reader off it cannot mistake a kind for a label
+   * [FRAMING:representation]. */
+  readonly firedEffectKind?: string;
 }
 
 /**

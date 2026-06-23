@@ -26,13 +26,13 @@ export function Chat({
             stay scrollable instead of being clipped above a justify-end edge. */}
         <div className="mt-auto flex flex-col gap-1.5">
         {messages.map((m) =>
-          m.firedOfferLabel !== undefined ? (
+          m.firedEffectKind !== undefined ? (
             <div
               key={m.id}
               className="rounded-sm border border-accent-dim/40 bg-accent/10 px-2 py-1.5 text-xs text-accent"
             >
               ◎ <span className="font-semibold">{m.author || 'someone'}</span> fired{' '}
-              <span className="font-semibold">{m.firedOfferLabel}</span>
+              <span className="font-semibold">{m.firedEffectKind}</span>
             </div>
           ) : (
             <div key={m.id} className="leading-snug">

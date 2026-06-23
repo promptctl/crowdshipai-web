@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
 import type { FundResult, SpendResult } from '@/data/buy-result';
+import { parseFiredEffect } from '@/data/live-event';
 import type { ChannelView, ChatMessage, PricedOffer } from '@/data/types';
 import { buyCoins, buyOffer } from '@/server/market-actions';
 
@@ -20,19 +21,29 @@ import { StreamStage } from './StreamStage';
  * Spending and buying coins move REAL coins on the ledger through the `buyOffer` /
  * `buyCoins` server actions; this surface never tallies money itself. Every action
  * returns the authoritative balance re-read from the ledger and the money outcome,
- * which this owner projects to the balance, the chat, and a notice — so what the
- * backer sees is the ledger's truth, not an optimistic guess [LAW:one-source-of-truth].
- * The loud cases (coins moved but the effect did not fire; fiat taken but coins not
- * credited) surface as an explicit error notice, never a silent swallow [LAW:no-silent-failure].
+ * which this owner projects to the balance and a notice — so what the backer sees is
+ * the ledger's truth, not an optimistic guess [LAW:one-source-of-truth]. The loud
+ * cases (coins moved but the effect did not fire; fiat taken but coins not credited)
+ * surface as an explicit error notice, never a silent swallow [LAW:no-silent-failure].
+ *
+ * A FIRED EFFECT reaches the chat through ONE path only: the live event channel.
+ * When any backer's purchase fires, the stream publishes it and every watcher —
+ * including the one who bought it — receives it over the SSE subscription below and
+ * appends the same line. The buyer is never shown a private optimistic echo the rest
+ * of the audience cannot see; what they watch fire is exactly what everyone watches
+ * fire, from the single broadcast source [LAW:one-source-of-truth]. The channel is
+ * best-effort and LIVE-not-history: a missed event is not a money error (the purchase
+ * already committed and is recorded), and a viewer sees only what fires after they
+ * connect.
  */
 
 /** A buy outcome distilled to what this surface must do: the new balance (absent
- *  when the attempt moved no money and learned none), whether to post a fired-offer
- *  line, and the notice to show. A pure value so the outcome→view mapping is an
- *  exhaustive, side-effect-free match and a new outcome arm is a compile error
- *  [LAW:dataflow-not-control-flow]. */
+ *  when the attempt moved no money and learned none) and the notice to show. A pure
+ *  value so the outcome→view mapping is an exhaustive, side-effect-free match and a
+ *  new outcome arm is a compile error [LAW:dataflow-not-control-flow]. The fired line
+ *  is NOT here — it arrives from the live channel, not from the buyer's own result. */
 type Notice = { readonly tone: 'ok' | 'info' | 'warn' | 'error'; readonly text: string };
-type Delta = { readonly balance?: number; readonly fire?: true; readonly notice: Notice };
+type Delta = { readonly balance?: number; readonly notice: Notice };
 
 const NEED_COINS = 'Not enough coins — buy some to spend.';
 const RECONCILE_SPEND =
@@ -51,7 +62,7 @@ const UNCONFIRMED: Notice = {
 const spendDelta = (r: SpendResult): Delta => {
   switch (r.kind) {
     case 'fired':
-      return { balance: r.balance, fire: true, notice: { tone: 'ok', text: 'Sent — it fired live.' } };
+      return { balance: r.balance, notice: { tone: 'ok', text: 'Sent — it fired live.' } };
     case 'already-applied':
       return { balance: r.balance, notice: { tone: 'info', text: 'Already applied.' } };
     case 'insufficient-coins':
@@ -113,16 +124,38 @@ export function WatchSurface({
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState('');
   const nextId = useRef(0);
-  const localId = () => `local-${(nextId.current += 1)}`;
+  // One id minter, one counter — the single source of client-side chat ids, prefixed
+  // by origin so a live line and a typed line never collide [LAW:one-source-of-truth].
+  // It reads only the ref, so the live subscription below may call it without becoming
+  // a dependency that would tear the connection down and rebuild it each render.
+  const mintId = (origin: string) => `${origin}-${(nextId.current += 1)}`;
 
   const append = (m: ChatMessage) => setMessages((prev) => [...prev, m]);
 
-  // Apply a buy outcome's view delta. The one place balance, chat, and notice move
-  // together after a money action, so the surface can never show, say, a fired line
-  // without the balance that paid for it [LAW:one-source-of-truth].
-  const apply = (delta: Delta, firedLabel: string) => {
+  // Subscribe to the builder's live event channel for this stream's whole lifetime
+  // on the surface. The effect OWNS the connection's lifecycle — open on mount,
+  // close on unmount or slug change — so nothing leaks a stale stream behind the
+  // surface's back [LAW:no-ambient-temporal-coupling]. Every fired effect, from any
+  // backer, arrives here and becomes a chat line; this is the SINGLE source of fired
+  // lines [LAW:one-source-of-truth]. A frame that is not a fired effect (a future
+  // event type, a garbled frame) parses to null and is simply not a chat line — honest
+  // optionality at the wire trust boundary, not a swallowed error [LAW:no-silent-failure].
+  useEffect(() => {
+    const source = new EventSource(`/watch/${stream.slug}/events`);
+    source.onmessage = (e) => {
+      const fired = parseFiredEffect(e.data);
+      if (fired === null) return;
+      setMessages((prev) => [...prev, { id: mintId('live'), author: '', text: '', firedEffectKind: fired.effectKind }]);
+    };
+    return () => source.close();
+  }, [stream.slug]);
+
+  // Apply a buy outcome's view delta: the new balance and the notice, moved together
+  // so the surface never shows a stale balance beside a fresh notice [LAW:one-source-of-truth].
+  // The fired chat line is NOT applied here — it arrives over the live channel above,
+  // the same broadcast every other watcher sees.
+  const apply = (delta: Delta) => {
     if (delta.balance !== undefined) setBalance(delta.balance);
-    if (delta.fire === true) append({ id: localId(), author: 'you', text: '', firedOfferLabel: firedLabel });
     setNotice(delta.notice);
   };
 
@@ -130,8 +163,7 @@ export function WatchSurface({
     if (busy) return;
     setBusy(true);
     try {
-      const result = await buyOffer(stream.slug, offer.id, crypto.randomUUID());
-      apply(spendDelta(result), offer.label);
+      apply(spendDelta(await buyOffer(stream.slug, offer.id, crypto.randomUUID())));
     } catch {
       setNotice(UNCONFIRMED);
     } finally {
@@ -143,7 +175,7 @@ export function WatchSurface({
     if (busy) return;
     setBusy(true);
     try {
-      apply(fundDelta(await buyCoins(amount, crypto.randomUUID())), '');
+      apply(fundDelta(await buyCoins(amount, crypto.randomUUID())));
     } catch {
       setNotice(UNCONFIRMED);
     } finally {
@@ -154,7 +186,7 @@ export function WatchSurface({
   const onSend = () => {
     const text = draft.trim();
     if (text.length === 0) return;
-    append({ id: localId(), author: 'you', text });
+    append({ id: mintId('local'), author: 'you', text });
     setDraft('');
   };
 

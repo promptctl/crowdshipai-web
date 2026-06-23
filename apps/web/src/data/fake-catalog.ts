@@ -109,7 +109,7 @@ const SEED: readonly SeedBuilder[] = [
       { id: 'c1', author: 'pixelpilot', text: 'the vignette is so clean wtf' },
       { id: 'c2', author: 'nlogn', text: 'is this branchless yet' },
       { id: 'c3', author: 'mara', text: 'almost. one cmov away from glory' },
-      { id: 'c4', author: 'system', text: '', firedOfferLabel: 'Shoutout' },
+      { id: 'c4', author: 'system', text: '', firedEffectKind: 'shoutout' },
     ],
   },
   {
