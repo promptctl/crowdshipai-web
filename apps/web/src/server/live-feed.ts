@@ -10,7 +10,7 @@ import {
 } from '@crowdship/live-feed';
 import type { Effect, EffectReceipt } from '@crowdship/menu';
 
-import { EFFECT_FIRED_EVENT } from '../data/live-event';
+import { CHAT_MESSAGE_EVENT, EFFECT_FIRED_EVENT } from '../data/live-event';
 
 /**
  * The single place the web app decides which {@link LiveFeed} it runs against
@@ -38,6 +38,16 @@ const clock = new SystemClock();
  *  minting a blank type [LAW:no-silent-failure]. */
 const EFFECT_FIRED: LiveEventType = (() => {
   const t = liveEventType(EFFECT_FIRED_EVENT);
+  if (!t.ok) throw new Error('live-feed: minted a blank live event type');
+  return t.value;
+})();
+
+/** The kind every chat-message live event carries — chat riding the same spine as
+ *  fired effects, minted from the SAME wire label the watch surface parses on so
+ *  publish and consume cannot drift [LAW:one-source-of-truth]. Halts loudly on a
+ *  blank rather than minting a blank type [LAW:no-silent-failure]. */
+const CHAT_MESSAGE: LiveEventType = (() => {
+  const t = liveEventType(CHAT_MESSAGE_EVENT);
   if (!t.ok) throw new Error('live-feed: minted a blank live event type');
   return t.value;
 })();
@@ -85,6 +95,24 @@ export const announceEffectFired = (
     type: EFFECT_FIRED,
     at: clock.now(),
     payload: { effectKind: effect.kind, params: effect.params, receipt },
+  };
+  return getLiveFeed().publish(liveTopicOf(builderSlug), live);
+};
+
+/**
+ * Broadcast one chat line on a builder's stream — the publish half of the chat
+ * channel, twin of {@link announceEffectFired}. The `author` is already the public
+ * label decided at the action edge (a channel name or a viewer pseudonym), so this
+ * edge only stamps it now and fans it out; it makes no naming or authorization
+ * decision of its own [LAW:decomposition]. Best-effort LIVE fan-out: the feed stores
+ * nothing, so a watcher who connects later never sees this line, and that is the
+ * channel's nature, not a dropped record [LAW:one-source-of-truth].
+ */
+export const announceChatMessage = (builderSlug: string, author: string, text: string): Promise<void> => {
+  const live: LiveEvent = {
+    type: CHAT_MESSAGE,
+    at: clock.now(),
+    payload: { author, text },
   };
   return getLiveFeed().publish(liveTopicOf(builderSlug), live);
 };

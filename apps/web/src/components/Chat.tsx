@@ -1,20 +1,31 @@
+import Link from 'next/link';
+
 import type { ChatMessage } from '@/data/types';
 
 /**
  * The live chat column. A fired effect and an ordinary line are one message
  * type, not two parallel systems [LAW:one-type-per-behavior]. Pure
  * presentational; the message list and the send action are owned upstream.
+ *
+ * A logged-out viewer reads the chat but cannot speak — an anonymous back-channel
+ * is refused at the action [LAW:single-enforcer], and this footer reflects that
+ * truth rather than offering an input that would only bounce: it shows a sign-in
+ * prompt instead, the same courtesy the wallet shows. The variability is WHICH
+ * footer renders, a value derived from `signedIn`, not whether one appears
+ * [LAW:dataflow-not-control-flow].
  */
 export function Chat({
   messages,
   draft,
   onDraftChange,
   onSend,
+  signedIn,
 }: {
   readonly messages: readonly ChatMessage[];
   readonly draft: string;
   readonly onDraftChange: (value: string) => void;
   readonly onSend: () => void;
+  readonly signedIn: boolean;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -43,26 +54,35 @@ export function Chat({
         )}
         </div>
       </div>
-      <form
-        className="flex gap-2 border-t border-edge p-2.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSend();
-        }}
-      >
-        <input
-          value={draft}
-          onChange={(e) => onDraftChange(e.target.value)}
-          placeholder="say something…"
-          className="min-w-0 flex-1 rounded-sm border border-edge bg-surface px-2.5 py-1.5 text-sm text-chalk outline-none placeholder:text-fog/60 focus:border-accent-dim"
-        />
-        <button
-          type="submit"
-          className="rounded-sm bg-surface-2 px-3 py-1.5 text-xs font-semibold text-chalk transition-colors hover:bg-edge"
+      {signedIn ? (
+        <form
+          className="flex gap-2 border-t border-edge p-2.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSend();
+          }}
         >
-          send
-        </button>
-      </form>
+          <input
+            value={draft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            placeholder="say something…"
+            className="min-w-0 flex-1 rounded-sm border border-edge bg-surface px-2.5 py-1.5 text-sm text-chalk outline-none placeholder:text-fog/60 focus:border-accent-dim"
+          />
+          <button
+            type="submit"
+            className="rounded-sm bg-surface-2 px-3 py-1.5 text-xs font-semibold text-chalk transition-colors hover:bg-edge"
+          >
+            send
+          </button>
+        </form>
+      ) : (
+        <p className="border-t border-edge p-2.5 text-xs text-fog">
+          <Link href="/login" className="font-semibold text-accent hover:underline">
+            Sign in
+          </Link>{' '}
+          to join the chat.
+        </p>
+      )}
     </div>
   );
 }

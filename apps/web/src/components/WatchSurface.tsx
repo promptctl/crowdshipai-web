@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
 import type { FundResult, SpendResult } from '@/data/buy-result';
-import { parseFiredEffect } from '@/data/live-event';
+import type { ChatResult } from '@/data/chat-result';
+import { parseChatMessage, parseFiredEffect } from '@/data/live-event';
 import type { ChannelView, ChatMessage, PricedOffer } from '@/data/types';
+import { sendChat } from '@/server/chat-actions';
 import { buyCoins, buyOffer } from '@/server/market-actions';
 
 import { BuilderAvatar } from './BuilderAvatar';
@@ -97,6 +99,24 @@ const fundDelta = (r: FundResult): Delta => {
   }
 };
 
+/** A chat send distilled to the notice the surface must show, or `null` when there
+ *  is nothing to say about it: a sent line needs no notice — it appears in chat over
+ *  the live channel like every other watcher's — and a blank line was never sent.
+ *  Exhaustive over the result, so a new arm is a compile error here, never a silently
+ *  unhandled outcome [LAW:dataflow-not-control-flow]. Unlike a buy, a chat send moves
+ *  no money, so it carries no balance — just the notice. */
+const chatNotice = (r: ChatResult): Notice | null => {
+  switch (r.kind) {
+    case 'sent':
+    case 'empty':
+      return null;
+    case 'too-long':
+      return { tone: 'warn', text: `Message too long — keep it under ${r.max} characters.` };
+    case 'must-authenticate':
+      return { tone: 'info', text: 'Sign in to chat.' };
+  }
+};
+
 const NOTICE_TONE: Readonly<Record<Notice['tone'], string>> = {
   ok: 'border-accent-dim bg-accent/10 text-accent',
   info: 'border-edge bg-surface-2 text-fog',
@@ -111,9 +131,13 @@ const COIN_PACKS: readonly number[] = [500, 2000, 10000];
 export function WatchSurface({
   channel,
   initialBalance,
+  signedIn,
 }: {
   readonly channel: ChannelView;
   readonly initialBalance: number | null;
+  /** Whether a live session backs this view — the chat input is a courtesy gate on
+   *  it; the send action is the real authenticator [LAW:single-enforcer]. */
+  readonly signedIn: boolean;
 }) {
   const { stream } = channel;
   const [messages, setMessages] = useState<readonly ChatMessage[]>(channel.chat);
@@ -130,8 +154,6 @@ export function WatchSurface({
   // a dependency that would tear the connection down and rebuild it each render.
   const mintId = (origin: string) => `${origin}-${(nextId.current += 1)}`;
 
-  const append = (m: ChatMessage) => setMessages((prev) => [...prev, m]);
-
   // Subscribe to the builder's live event channel for this stream's whole lifetime
   // on the surface. The effect OWNS the connection's lifecycle — open on mount,
   // close on unmount or slug change — so nothing leaks a stale stream behind the
@@ -143,9 +165,20 @@ export function WatchSurface({
   useEffect(() => {
     const source = new EventSource(`/watch/${stream.slug}/events`);
     source.onmessage = (e) => {
+      // The one subscription carries every event type on the topic; route each frame
+      // to its renderer by which parser claims it. A fired effect and a chat line are
+      // both chat messages [LAW:one-type-per-behavior]; a frame neither parser claims
+      // is a future event type this build does not render — simply not a line, never
+      // an error [LAW:no-silent-failure].
       const fired = parseFiredEffect(e.data);
-      if (fired === null) return;
-      setMessages((prev) => [...prev, { id: mintId('live'), author: '', text: '', firedEffectKind: fired.effectKind }]);
+      if (fired !== null) {
+        setMessages((prev) => [...prev, { id: mintId('live'), author: '', text: '', firedEffectKind: fired.effectKind }]);
+        return;
+      }
+      const chat = parseChatMessage(e.data);
+      if (chat !== null) {
+        setMessages((prev) => [...prev, { id: mintId('chat'), author: chat.author, text: chat.text }]);
+      }
     };
     return () => source.close();
   }, [stream.slug]);
@@ -183,11 +216,31 @@ export function WatchSurface({
     }
   };
 
-  const onSend = () => {
+  // Sending a line PUBLISHES it onto the live channel; it does NOT echo locally. The
+  // sender's own line arrives back over the same SSE subscription every other watcher
+  // reads, so what they see is the one broadcast under their public author, never a
+  // private "you" line the rest of the audience cannot see [LAW:one-source-of-truth] —
+  // exactly how a fired effect already reaches them.
+  const onSend = async () => {
     const text = draft.trim();
     if (text.length === 0) return;
-    append({ id: mintId('local'), author: 'you', text });
     setDraft('');
+    // The draft clears optimistically; on a non-sent outcome we hand the line back
+    // ONLY if the input is still empty — so a refused or too-long line is never lost,
+    // yet a fresh line the viewer began typing during the round-trip is never
+    // clobbered [LAW:no-silent-failure].
+    const restoreDraft = () => setDraft((current) => (current.length === 0 ? text : current));
+    try {
+      const result = await sendChat(stream.slug, text);
+      if (result.kind !== 'sent') {
+        restoreDraft();
+        const next = chatNotice(result);
+        if (next !== null) setNotice(next);
+      }
+    } catch {
+      restoreDraft();
+      setNotice(UNCONFIRMED);
+    }
   };
 
   return (
@@ -225,7 +278,7 @@ export function WatchSurface({
             <Menu offers={channel.menu} balance={balance ?? 0} onSpend={onSpend} />
           </div>
           <div className="flex-1 overflow-hidden rounded-lg border border-edge bg-surface">
-            <Chat messages={messages} draft={draft} onDraftChange={setDraft} onSend={onSend} />
+            <Chat messages={messages} draft={draft} onDraftChange={setDraft} onSend={onSend} signedIn={signedIn} />
           </div>
         </aside>
       </div>

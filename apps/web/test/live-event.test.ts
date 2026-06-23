@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { EFFECT_FIRED_EVENT, parseFiredEffect } from '../src/data/live-event';
+import {
+  CHAT_MESSAGE_EVENT,
+  EFFECT_FIRED_EVENT,
+  parseChatMessage,
+  parseFiredEffect,
+} from '../src/data/live-event';
 
 /**
  * The watch surface's consume edge parses raw SSE frames at the wire trust boundary.
@@ -57,5 +62,66 @@ describe('parseFiredEffect', () => {
     expect(parseFiredEffect(noKind)).toBeNull();
     expect(parseFiredEffect(blankKind)).toBeNull();
     expect(parseFiredEffect(numberKind)).toBeNull();
+  });
+});
+
+/** The exact event shape the publish edge (`announceChatMessage`) puts on the wire:
+ *  the open chat type label, a publisher-stamped `at`, and the `{author, text}`
+ *  payload the watcher renders. Built here verbatim so this test fails loudly if the
+ *  two halves of the seam ever drift apart [LAW:one-source-of-truth]. */
+const chatFrame = (author: string, text: string): string =>
+  JSON.stringify({ type: CHAT_MESSAGE_EVENT, at: 1_700_000_000_000, payload: { author, text } });
+
+describe('parseChatMessage', () => {
+  it('reads the author and text from a faithful chat frame', () => {
+    expect(parseChatMessage(chatFrame('mara', 'one cmov away'))).toEqual({ author: 'mara', text: 'one cmov away' });
+  });
+
+  it('carries a viewer pseudonym author through verbatim', () => {
+    expect(parseChatMessage(chatFrame('viewer-3f9a1c', 'wen simd'))).toEqual({
+      author: 'viewer-3f9a1c',
+      text: 'wen simd',
+    });
+  });
+
+  it('is null for a garbled, non-JSON frame from the wire', () => {
+    expect(parseChatMessage('not json at all')).toBeNull();
+  });
+
+  it('is null for a JSON value that is not an event object', () => {
+    expect(parseChatMessage('"just a string"')).toBeNull();
+    expect(parseChatMessage('[1,2,3]')).toBeNull();
+    expect(parseChatMessage('null')).toBeNull();
+  });
+
+  it('is null when the payload is missing or not an object', () => {
+    expect(parseChatMessage(JSON.stringify({ type: CHAT_MESSAGE_EVENT, at: 1 }))).toBeNull();
+    expect(parseChatMessage(JSON.stringify({ type: CHAT_MESSAGE_EVENT, at: 1, payload: 'x' }))).toBeNull();
+  });
+
+  it('is null when the author or text is blank or not a string', () => {
+    expect(parseChatMessage(chatFrame('', 'hi'))).toBeNull();
+    expect(parseChatMessage(chatFrame('mara', ''))).toBeNull();
+    expect(
+      parseChatMessage(JSON.stringify({ type: CHAT_MESSAGE_EVENT, at: 1, payload: { author: 7, text: 'hi' } })),
+    ).toBeNull();
+    expect(
+      parseChatMessage(JSON.stringify({ type: CHAT_MESSAGE_EVENT, at: 1, payload: { author: 'mara', text: 9 } })),
+    ).toBeNull();
+  });
+});
+
+/**
+ * The two sibling parsers read the same wire but never claim each other's frames:
+ * each is honest optionality for the OTHER's event type, so the consume edge can try
+ * both and route by which one claims the frame [LAW:no-silent-failure].
+ */
+describe('the sibling parsers stay in their lanes', () => {
+  it('parseFiredEffect does not claim a chat frame', () => {
+    expect(parseFiredEffect(chatFrame('mara', 'hi'))).toBeNull();
+  });
+
+  it('parseChatMessage does not claim a fired-effect frame', () => {
+    expect(parseChatMessage(firedFrame('shoutout'))).toBeNull();
   });
 });
