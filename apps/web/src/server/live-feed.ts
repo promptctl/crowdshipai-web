@@ -10,7 +10,7 @@ import {
 } from '@crowdship/live-feed';
 import type { Effect, EffectReceipt } from '@crowdship/menu';
 
-import { CHAT_MESSAGE_EVENT, EFFECT_FIRED_EVENT } from '../data/live-event';
+import { CHAT_MESSAGE_EVENT, EFFECT_FIRED_EVENT, PRESENCE_EVENT } from '../data/live-event';
 
 /**
  * The single place the web app decides which {@link LiveFeed} it runs against
@@ -31,26 +31,23 @@ import { CHAT_MESSAGE_EVENT, EFFECT_FIRED_EVENT } from '../data/live-event';
 
 const clock = new SystemClock();
 
-/** The kind every effect-fired live event carries — the open label a watcher's
- *  overlay routes on, minted from the SAME wire label the watch surface parses on,
- *  so publish and consume cannot drift to different spellings [LAW:one-source-of-truth].
- *  A non-blank literal, so a blank is a broken invariant that halts loudly rather than
- *  minting a blank type [LAW:no-silent-failure]. */
-const EFFECT_FIRED: LiveEventType = (() => {
-  const t = liveEventType(EFFECT_FIRED_EVENT);
-  if (!t.ok) throw new Error('live-feed: minted a blank live event type');
+/** Mint the open `LiveEventType` an announcer publishes under, from the SAME wire
+ *  label the watch surface parses on, so publish and consume cannot drift to different
+ *  spellings [LAW:one-source-of-truth]. The label is a non-blank literal known at
+ *  module load, so a blank is a broken invariant that halts loudly rather than minting
+ *  a blank type [LAW:no-silent-failure] — and the check lives in exactly one place for
+ *  every event kind the spine grows [LAW:single-enforcer]. */
+const mintEventType = (label: string): LiveEventType => {
+  const t = liveEventType(label);
+  if (!t.ok) throw new Error(`live-feed: minted a blank live event type from ${JSON.stringify(label)}`);
   return t.value;
-})();
+};
 
-/** The kind every chat-message live event carries — chat riding the same spine as
- *  fired effects, minted from the SAME wire label the watch surface parses on so
- *  publish and consume cannot drift [LAW:one-source-of-truth]. Halts loudly on a
- *  blank rather than minting a blank type [LAW:no-silent-failure]. */
-const CHAT_MESSAGE: LiveEventType = (() => {
-  const t = liveEventType(CHAT_MESSAGE_EVENT);
-  if (!t.ok) throw new Error('live-feed: minted a blank live event type');
-  return t.value;
-})();
+// The open labels each announcer below publishes under — fired effects, chat lines,
+// and the live viewer count, every kind riding the one feed [LAW:no-mode-explosion].
+const EFFECT_FIRED: LiveEventType = mintEventType(EFFECT_FIRED_EVENT);
+const CHAT_MESSAGE: LiveEventType = mintEventType(CHAT_MESSAGE_EVENT);
+const PRESENCE: LiveEventType = mintEventType(PRESENCE_EVENT);
 
 // One feed per process, the single owner of the in-memory subscriptions
 // [LAW:no-shared-mutable-globals]. Cached on globalThis so Next.js dev HMR, which
@@ -113,6 +110,27 @@ export const announceChatMessage = (builderSlug: string, author: string, text: s
     type: CHAT_MESSAGE,
     at: clock.now(),
     payload: { author, text },
+  };
+  return getLiveFeed().publish(liveTopicOf(builderSlug), live);
+};
+
+/**
+ * Surface the live viewer count on a builder's stream — the publish half of presence,
+ * twin of {@link announceEffectFired}. The `count` is ALREADY derived by the presence
+ * registry (the authoritative occupancy); this edge only carries that number to every
+ * watcher, it never tallies anything itself [LAW:decomposition]. The caller reads the
+ * count from the registry and hands it here whole, so the frame carries the truth
+ * rather than a +1/-1 delta a watcher would have to accumulate — the count's authority
+ * stays in the registry, the feed only echoes it [LAW:one-source-of-truth]. Best-effort
+ * LIVE fan-out: a missed frame leaves a watcher a beat stale until the next presence
+ * change re-announces the count, never wrong forever, because the next frame is again
+ * the whole truth.
+ */
+export const announcePresence = (builderSlug: string, count: number): Promise<void> => {
+  const live: LiveEvent = {
+    type: PRESENCE,
+    at: clock.now(),
+    payload: { count },
   };
   return getLiveFeed().publish(liveTopicOf(builderSlug), live);
 };

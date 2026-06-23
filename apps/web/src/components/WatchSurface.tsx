@@ -5,7 +5,7 @@ import Link from 'next/link';
 
 import type { FundResult, SpendResult } from '@/data/buy-result';
 import type { ChatResult } from '@/data/chat-result';
-import { parseChatMessage, parseFiredEffect } from '@/data/live-event';
+import { parseChatMessage, parseFiredEffect, parseViewerPresence } from '@/data/live-event';
 import type { ChannelView, ChatMessage, PricedOffer } from '@/data/types';
 import { sendChat } from '@/server/chat-actions';
 import { buyCoins, buyOffer } from '@/server/market-actions';
@@ -131,16 +131,27 @@ const COIN_PACKS: readonly number[] = [500, 2000, 10000];
 export function WatchSurface({
   channel,
   initialBalance,
+  initialViewerCount,
   signedIn,
 }: {
   readonly channel: ChannelView;
   readonly initialBalance: number | null;
+  /** The live viewer count at first paint, read from the presence registry at the
+   *  server edge — the registry is its source of truth, never the catalog's static
+   *  summary or this feed [LAW:one-source-of-truth]. The surface keeps it live below. */
+  readonly initialViewerCount: number;
   /** Whether a live session backs this view — the chat input is a courtesy gate on
    *  it; the send action is the real authenticator [LAW:single-enforcer]. */
   readonly signedIn: boolean;
 }) {
   const { stream } = channel;
   const [messages, setMessages] = useState<readonly ChatMessage[]>(channel.chat);
+  // The viewer count is owned here and seeded from the registry's reading at the edge,
+  // then driven live by presence frames off the one subscription below. It is derived
+  // state surfaced from the registry's truth, never a tally this surface keeps itself
+  // [LAW:one-source-of-truth] — each frame carries the whole count, so the surface
+  // replaces rather than accumulates [LAW:dataflow-not-control-flow].
+  const [viewerCount, setViewerCount] = useState(initialViewerCount);
   // null === no wallet (logged-out). A real absence the surface renders as "sign in",
   // never a zero balance that would imply an empty account they do not have.
   const [balance, setBalance] = useState<number | null>(initialBalance);
@@ -178,6 +189,15 @@ export function WatchSurface({
       const chat = parseChatMessage(e.data);
       if (chat !== null) {
         setMessages((prev) => [...prev, { id: mintId('chat'), author: chat.author, text: chat.text }]);
+        return;
+      }
+      // A presence frame is not a chat line — it sets the live viewer count, the one
+      // event type this surface renders outside the message list. The count it carries
+      // is the registry's already-derived truth; the surface shows it, never sums it
+      // [LAW:one-source-of-truth].
+      const presence = parseViewerPresence(e.data);
+      if (presence !== null) {
+        setViewerCount(presence.count);
       }
     };
     return () => source.close();
@@ -247,7 +267,7 @@ export function WatchSurface({
     <main className="mx-auto max-w-7xl px-5 py-6">
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_340px]">
         <div>
-          <StreamStage accentHue={stream.accentHue} isLive={stream.isLive} viewerCount={stream.viewerCount} size="stage" />
+          <StreamStage accentHue={stream.accentHue} isLive={stream.isLive} viewerCount={viewerCount} size="stage" />
           <div className="mt-4 flex items-start gap-3">
             <BuilderAvatar accentHue={stream.accentHue} className="h-11 w-11" />
             <div className="min-w-0">

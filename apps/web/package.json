@@ -20,6 +20,7 @@
     "@crowdship/moderation-node": "workspace:*",
     "@crowdship/on-ramp": "workspace:*",
     "@crowdship/payments": "workspace:*",
+    "@crowdship/presence": "workspace:*",
     "@crowdship/purchase": "workspace:*",
     "@crowdship/rate-limit": "workspace:*",
     "@crowdship/std": "workspace:*",

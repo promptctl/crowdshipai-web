@@ -1,16 +1,20 @@
 /**
  * The watch surface's side of the live event channel: the wire labels the stream
  * publishes under, and the parses of an SSE frame into the things this client build
- * renders — a fired effect, and a chat line. The serializable cross-network model, a
- * sibling of {@link import('./buy-result')} (a server action's reply) — all carry
- * only primitives across the boundary, never a service handle.
+ * renders — a fired effect, a chat line, and the live viewer count. The serializable
+ * cross-network model, a sibling of {@link import('./buy-result')} (a server action's
+ * reply) — all carry only primitives across the boundary, never a service handle.
  *
  * It is LIVE, not history: a watcher receives only events published after it
  * connects, and the feed stores nothing. So nothing here reconciles against a
  * durable record — the ledger and settlement feed are that record, never this
  * channel [LAW:one-source-of-truth]. A missed frame is not a money error; the
  * purchase already committed and is recorded regardless of who was watching, and a
- * missed chat line is simply a line a late viewer never saw.
+ * missed chat line is simply a line a late viewer never saw. The viewer count is the
+ * one frame the late viewer does NOT lose to this looseness: each frame carries the
+ * already-derived count in full (not a +1/-1 delta), so the next presence frame
+ * re-establishes the truth — the count's authority lives in the presence registry,
+ * never in this feed [LAW:one-source-of-truth].
  */
 
 /**
@@ -33,6 +37,17 @@ export const EFFECT_FIRED_EVENT = 'effect-fired';
 export const CHAT_MESSAGE_EVENT = 'chat-message';
 
 /**
+ * The open event-type label a live viewer count carries on the wire — presence
+ * joining the same spine as fired effects and chat, one more value flowing through
+ * the one `LiveFeed`, never a second real-time channel [LAW:no-mode-explosion].
+ * Minted into a `LiveEventType` by the publish edge from this very string, so publish
+ * and consume cannot drift apart [LAW:one-source-of-truth]. The frame carries the
+ * count the presence registry has ALREADY derived — the feed surfaces the number, it
+ * is never the tally.
+ */
+export const PRESENCE_EVENT = 'presence-count';
+
+/**
  * A fired effect as the watch surface renders it: the open effect kind the builder
  * authored (`shoutout`, `poll-vote`, `bounty-pool`, …), carried as data and shown
  * verbatim, never branched on [LAW:dataflow-not-control-flow]. `effectKind` is the
@@ -52,6 +67,17 @@ export interface FiredEffect {
 export interface ChatLine {
   readonly author: string;
   readonly text: string;
+}
+
+/**
+ * The live viewer count as it arrives off the wire: how many people are watching this
+ * build right now, derived at the publish edge from the presence registry and carried
+ * here whole. A non-negative integer always — a fractional, negative, or NaN count is
+ * not a viewer count [LAW:dataflow-not-control-flow], so the parse below rejects it to
+ * `null` rather than rendering a number that cannot be a number of people.
+ */
+export interface ViewerPresence {
+  readonly count: number;
 }
 
 /** A record we can index after proving the parsed value is a non-null object. */
@@ -117,4 +143,25 @@ export function parseChatMessage(raw: string): ChatLine | null {
   if (typeof text !== 'string' || text.length === 0) return null;
 
   return { author, text };
+}
+
+/**
+ * Parse one raw SSE `data:` frame into a {@link ViewerPresence}, or `null` when the
+ * frame is not one — the sibling of {@link parseFiredEffect} and {@link parseChatMessage},
+ * reading the same wire trust boundary the same way. A fired-effect or chat frame, a
+ * future event type, or a payload whose count is not a non-negative integer all
+ * resolve to `null`: not this build's viewer count, never a swallowed error
+ * [LAW:no-silent-failure]. The count must be a whole, non-negative number because a
+ * count of people is exactly that — anything else off the wire is a garbled frame, not
+ * a smaller or larger audience.
+ */
+export function parseViewerPresence(raw: string): ViewerPresence | null {
+  const frame = decodeFrame(raw);
+  if (frame === null || frame.type !== PRESENCE_EVENT) return null;
+  if (!isObject(frame.payload)) return null;
+
+  const { count } = frame.payload;
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return null;
+
+  return { count };
 }
