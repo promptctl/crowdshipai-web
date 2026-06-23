@@ -1,4 +1,5 @@
 import { accountId, EMPTY_ROSTER, staffRoster, type AccountId, type StaffRoster } from '@crowdship/identity';
+import { show } from '@crowdship/std';
 
 /**
  * The single place the web app resolves who holds platform-operator authority
@@ -32,7 +33,7 @@ const parseRoster = (raw: string | undefined): StaffRoster => {
     .map((token) => {
       const parsed = accountId(token);
       if (!parsed.ok) {
-        throw new Error(`${STAFF_ENV}: not a valid account id: ${JSON.stringify(token)}`);
+        throw new Error(`${STAFF_ENV}: not a valid account id: ${show(token)}`);
       }
       return parsed.value;
     });

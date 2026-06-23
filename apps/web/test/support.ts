@@ -1,5 +1,5 @@
 import type { Clock, Result, Timestamp } from '@crowdship/std';
-import { timestamp } from '@crowdship/std';
+import { show, timestamp } from '@crowdship/std';
 import type {
   Account,
   Authenticated,
@@ -19,7 +19,7 @@ import { accountId, DEFAULT_ROLES, email, sessionId, sessionToken } from '@crowd
  * than letting a malformed fixture flow on as a silent `undefined` [LAW:no-silent-failure].
  */
 export function must<T>(result: Result<T, unknown>): T {
-  if (!result.ok) throw new Error(`test setup expected ok, got error: ${JSON.stringify(result.error)}`);
+  if (!result.ok) throw new Error(`test setup expected ok, got error: ${show(result.error)}`);
   return result.value;
 }
 

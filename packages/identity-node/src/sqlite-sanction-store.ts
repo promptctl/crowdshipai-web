@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { AccountId, Sanction, SanctionScope, SanctionStore } from '@crowdship/identity';
-import { timestamp } from '@crowdship/std';
+import { show, timestamp } from '@crowdship/std';
 import { orThrow, reqInt, reqStr } from '@crowdship/node-std';
 
 type Row = Record<string, unknown>;
@@ -23,12 +23,12 @@ const toScope = (row: Row): SanctionScope => {
   // silently dropped to a plausible-but-wrong sanction [LAW:no-silent-failure].
   if (kind === 'permanent') {
     if (row['until'] !== null) {
-      throw new Error(`identity-node: sanctions.until set on a permanent scope: ${JSON.stringify(row['until'])}`);
+      throw new Error(`identity-node: sanctions.until set on a permanent scope: ${show(row['until'])}`);
     }
     return { kind: 'permanent' };
   }
   if (kind === 'until') return { kind: 'until', until: orThrow(timestamp(reqInt(row, 'until')), 'sanctions.until') };
-  throw new Error(`identity-node: sanctions.scope_kind is not a known scope: ${JSON.stringify(kind)}`);
+  throw new Error(`identity-node: sanctions.scope_kind is not a known scope: ${show(kind)}`);
 };
 
 /**

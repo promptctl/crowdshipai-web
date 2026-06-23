@@ -6,6 +6,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { SystemClock } from '@crowdship/identity-node';
 import { entryId, type AuditTrail, type EntryId } from '@crowdship/moderation';
 import { createSqliteAuditTrail, openModerationDb } from '@crowdship/moderation-node';
+import { show } from '@crowdship/std';
 
 /**
  * The single place the web app holds its moderation audit trail [LAW:single-enforcer] —
@@ -39,7 +40,7 @@ import { createSqliteAuditTrail, openModerationDb } from '@crowdship/moderation-
  */
 const newEntryId = (): EntryId => {
   const id = entryId(randomUUID());
-  if (!id.ok) throw new Error(`audit-trail: invalid entry id: ${JSON.stringify(id.error)}`);
+  if (!id.ok) throw new Error(`audit-trail: invalid entry id: ${show(id.error)}`);
   return id.value;
 };
 

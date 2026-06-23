@@ -1,6 +1,4 @@
-import type { Result } from '@crowdship/std';
-
-import { show } from './format.js';
+import { type Result, show } from '@crowdship/std';
 
 /**
  * Unwrap a construction that cannot legitimately fail at this call site — a randomly

@@ -19,7 +19,7 @@ import {
   paymentMethod,
   type FiatCharge,
 } from '@crowdship/payments';
-import { ok, type Result } from '@crowdship/std';
+import { ok, show, type Result } from '@crowdship/std';
 
 /**
  * The single place the web app holds the coin economy [LAW:single-enforcer] — the
@@ -48,7 +48,7 @@ import { ok, type Result } from '@crowdship/std';
  *  already-validated id, so a failure is a programmer error to surface at once,
  *  never a money movement formed from a bad value [LAW:no-silent-failure]. */
 const unwrap = <T>(r: Result<T, unknown>, what: string): T => {
-  if (!r.ok) throw new Error(`market: ${what}: ${JSON.stringify(r.error)}`);
+  if (!r.ok) throw new Error(`market: ${what}: ${show(r.error)}`);
   return r.value;
 };
 
@@ -73,7 +73,7 @@ interface Market {
   readonly mint: AccountId;
 }
 
-const ledgerAccountId = (raw: string): AccountId => unwrap(accountId(raw), `account id ${JSON.stringify(raw)}`);
+const ledgerAccountId = (raw: string): AccountId => unwrap(accountId(raw), `account id ${show(raw)}`);
 
 const build = (): Market => {
   const ledger = createInMemoryLedger();

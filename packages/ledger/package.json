@@ -10,6 +10,7 @@
   "dependencies": {
     "@crowdship/ledger-kernel": "workspace:*",
     "@crowdship/node-std": "workspace:*",
+    "@crowdship/std": "workspace:*",
     "tigerbeetle-node": "0.17.7"
   }
 }

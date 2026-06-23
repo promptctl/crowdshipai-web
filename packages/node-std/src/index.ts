@@ -11,4 +11,3 @@ export { DatabaseSync } from './sqlite.js';
 export type { StatementSync } from './sqlite.js';
 export { reqStr, reqInt, reqBytes } from './rows.js';
 export { orThrow } from './result.js';
-export { show } from './format.js';

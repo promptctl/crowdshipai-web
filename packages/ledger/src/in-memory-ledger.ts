@@ -8,6 +8,7 @@ import type {
   Transfer,
 } from '@crowdship/ledger-kernel';
 import { err, mayGoNegative, ok, timestamp } from '@crowdship/ledger-kernel';
+import { show } from '@crowdship/std';
 
 import { touchedAccounts, transactionIdOf } from './movement.js';
 import type { AccountConflict, Ledger, PostError, PostReceipt, PostRequest } from './port.js';
@@ -19,7 +20,7 @@ export type Clock = () => Timestamp;
 
 const systemClock: Clock = () => {
   const t = timestamp(Date.now());
-  if (!t.ok) throw new Error(`system clock produced an invalid timestamp: ${JSON.stringify(t.error)}`);
+  if (!t.ok) throw new Error(`system clock produced an invalid timestamp: ${show(t.error)}`);
   return t.value;
 };
 

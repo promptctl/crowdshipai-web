@@ -1,5 +1,5 @@
 import type { Result } from '@crowdship/std';
-import { err, ok } from '@crowdship/std';
+import { err, ok, show } from '@crowdship/std';
 import type {
   ChargeDeclined,
   ChargeReceipt,
@@ -45,7 +45,7 @@ const toStripeAmount = (amount: bigint): number => {
 // Stripe disagreeing with a guarantee its own `succeeded` status implies (a blank
 // id, a non-positive captured amount), so it halts loudly [LAW:no-silent-failure].
 const recover = <T>(result: Result<T, unknown>, what: string): T => {
-  if (!result.ok) throw new Error(`stripe charge: ${what}: ${JSON.stringify(result.error)}`);
+  if (!result.ok) throw new Error(`stripe charge: ${what}: ${show(result.error)}`);
   return result.value;
 };
 

@@ -14,6 +14,7 @@ import {
   type Menu,
   type OfferDraft,
 } from '@crowdship/menu';
+import { show } from '@crowdship/std';
 
 import type {
   ChannelSlug,
@@ -34,7 +35,7 @@ const rating = (level: MaturityLevel, ...descriptors: readonly string[]): Maturi
     level,
     descriptors.map((raw): ContentDescriptor => {
       const d = contentDescriptor(raw);
-      if (!d.ok) throw new Error(`seed: invalid content descriptor ${JSON.stringify(raw)}`);
+      if (!d.ok) throw new Error(`seed: invalid content descriptor ${show(raw)}`);
       return d.value;
     }),
   );
@@ -57,7 +58,7 @@ const domainMenu = (offers: readonly PricedOffer[]): Menu => {
     effect: { kind: o.effect.kind, params: o.effect.summary },
   }));
   const authored = authorMenu(drafts, DEFAULT_MENU_POLICY);
-  if (!authored.ok) throw new Error(`seed: invalid menu: ${JSON.stringify(authored.error)}`);
+  if (!authored.ok) throw new Error(`seed: invalid menu: ${show(authored.error)}`);
   return authored.value;
 };
 

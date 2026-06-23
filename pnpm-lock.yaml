@@ -123,6 +123,9 @@ importers:
       '@crowdship/node-std':
         specifier: workspace:*
         version: link:../node-std
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
       tigerbeetle-node:
         specifier: 0.17.7
         version: 0.17.7

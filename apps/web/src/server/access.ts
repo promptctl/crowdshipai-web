@@ -6,6 +6,7 @@ import {
   type MaturityRating,
   type PolicyDecision,
 } from '@crowdship/moderation';
+import { show } from '@crowdship/std';
 
 import { actorRefFor } from './actor-ref';
 import { getPolicyBoundary } from './policy';
@@ -48,7 +49,7 @@ const ANONYMOUS_VIEWER = 'anonymous-viewer';
 const viewerRef = (principal: Principal | null): ActorRef => {
   if (principal !== null) return actorRefFor(principal);
   const ref = actorRef(ANONYMOUS_VIEWER);
-  if (!ref.ok) throw new Error(`access: invalid actor ref: ${JSON.stringify(ref.error)}`);
+  if (!ref.ok) throw new Error(`access: invalid actor ref: ${show(ref.error)}`);
   return ref.value;
 };
 
