@@ -3,6 +3,7 @@
 import type { FundResult, SpendResult } from '../data/buy-result';
 import { getCatalog } from '../data/catalog';
 import { coinPurchaseAmount, toFundResult, toSpendResult } from './buy-mapping';
+import { announceEffectFired } from './live-feed';
 import { coinBalanceOf, creditCoins, spendOnOffer } from './market';
 import { currentPrincipal } from './principal';
 
@@ -40,6 +41,17 @@ export async function buyOffer(
   if (offer === null) return { kind: 'no-such-offer' };
 
   const outcome = await spendOnOffer(principal, slug, offer, attemptId);
+  // The effect FIRING is the moment it appears live on the stream. Only a genuine
+  // first firing is announced — destructuring the closed `PurchaseOutcome` for the
+  // one arm that carries a fresh effect receipt, never the idempotent `already-applied`
+  // replay (which would re-show the audience an effect they already saw) and never a
+  // refusal (no effect fired) [LAW:dataflow-not-control-flow]. The announce is
+  // best-effort live fan-out downstream of the already-committed purchase; the money
+  // moved and the purchase is recorded regardless of who is watching, so it can never
+  // change the backer's result [LAW:one-source-of-truth]. (Today's in-memory feed
+  // never rejects; a real fan-out transport that can must be made non-fatal HERE,
+  // since the purchase is already complete — the transport-adapter ticket's concern.)
+  if (outcome.kind === 'fired') await announceEffectFired(slug, offer.effect, outcome.effect);
   const balance = Number(await coinBalanceOf(principal));
   return toSpendResult(outcome, balance);
 }
