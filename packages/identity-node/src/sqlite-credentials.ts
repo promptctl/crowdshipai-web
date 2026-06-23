@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { AccountId, CredentialStore, Secret } from '@crowdship/identity';
-import { reqBytes, reqInt } from './internal.js';
+import { reqBytes, reqInt } from '@crowdship/node-std';
 import {
   DEFAULT_SCRYPT_PARAMS,
   deriveCredential,

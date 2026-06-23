@@ -15,7 +15,7 @@ import {
   type VerificationStatus,
 } from '@crowdship/identity';
 import { timestamp } from '@crowdship/std';
-import { orThrow, reqInt, reqStr } from './internal.js';
+import { orThrow, reqInt, reqStr } from '@crowdship/node-std';
 
 type Row = Record<string, unknown>;
 

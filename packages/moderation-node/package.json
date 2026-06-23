@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@crowdship/moderation": "workspace:*",
+    "@crowdship/node-std": "workspace:*",
     "@crowdship/std": "workspace:*"
   }
 }

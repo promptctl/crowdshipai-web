@@ -3,8 +3,9 @@ const nextConfig = {
   reactStrictMode: true,
   // The identity packages ship raw TypeScript source (no build step), so Next
   // must transpile them like first-party code [LAW:one-source-of-truth — one copy
-  // of the source, consumed directly].
-  transpilePackages: ['@crowdship/std', '@crowdship/identity', '@crowdship/identity-node'],
+  // of the source, consumed directly]. @crowdship/node-std is the shared node-runtime
+  // home identity-node now loads node:sqlite through, raw TS in the same chain.
+  transpilePackages: ['@crowdship/std', '@crowdship/node-std', '@crowdship/identity', '@crowdship/identity-node'],
   webpack: (config, { isServer }) => {
     // Those packages import with explicit `.js` specifiers (the NodeNext/ESM
     // convention TypeScript and vitest already resolve to `.ts`). Teach webpack

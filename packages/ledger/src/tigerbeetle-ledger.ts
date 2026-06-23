@@ -17,6 +17,7 @@ import {
   timestamp,
   transactionReason,
 } from '@crowdship/ledger-kernel';
+import { show } from '@crowdship/node-std';
 import type {
   Account as TBAccount,
   AccountFilter as TBAccountFilter,
@@ -119,8 +120,16 @@ const HISTORY_FLAGS = AccountFilterFlags.debits | AccountFilterFlags.credits;
 // the single authority on these invariants [LAW:single-enforcer]. A recorded value
 // that fails to re-validate is not a routine error a caller handles; it is the audit
 // trail disagreeing with itself, so it halts loudly [LAW:no-silent-failure].
+// Renders the error through node-std's `show`, not raw `JSON.stringify`, because a
+// recorded value that fails to re-validate can carry a bigint — `coinAmount`'s
+// `{ value: bigint }` for a non-positive recorded amount — and `JSON.stringify` THROWS
+// on a bigint, which would replace this loud corruption message with a confusing
+// serializer error on the money path [LAW:no-silent-failure]. `recover` stays distinct
+// from node-std's `orThrow` for now only because it unwraps the kernel's own `Result`
+// (ledger-kernel re-copies std's `Result`); converging the two awaits that deferred
+// std/kernel unification, but the renderer is already one source of truth [LAW:one-source-of-truth].
 const recover = <T>(result: Result<T, unknown>, what: string): T => {
-  if (!result.ok) throw new Error(`ledger corruption: ${what}: ${JSON.stringify(result.error)}`);
+  if (!result.ok) throw new Error(`ledger corruption: ${what}: ${show(result.error)}`);
   return result.value;
 };
 

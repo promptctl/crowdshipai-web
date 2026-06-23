@@ -14,7 +14,7 @@ import {
   type SessionId,
   type SessionToken,
 } from '@crowdship/identity';
-import { orThrow } from './internal.js';
+import { orThrow } from '@crowdship/node-std';
 
 /** 256 bits — well past any guessing or birthday-collision concern for a bearer secret. */
 const TOKEN_BYTES = 32;

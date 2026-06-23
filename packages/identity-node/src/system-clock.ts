@@ -1,6 +1,6 @@
 import type { Clock, Timestamp } from '@crowdship/std';
 import { timestamp } from '@crowdship/std';
-import { orThrow } from './internal.js';
+import { orThrow } from '@crowdship/node-std';
 
 /**
  * The real wall clock — the one place "now" actually touches the outside
