@@ -28,6 +28,12 @@ export default function RootLayout({ children }: { readonly children: React.Reac
               >
                 browse
               </Link>
+              <Link
+                href="/talent"
+                className="rounded-full px-3 py-1.5 text-fog transition-colors hover:bg-surface-2 hover:text-chalk"
+              >
+                talent
+              </Link>
               <AuthNav />
               <Link
                 href="/account"
