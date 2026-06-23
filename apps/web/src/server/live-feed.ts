@@ -10,6 +10,8 @@ import {
 } from '@crowdship/live-feed';
 import type { Effect, EffectReceipt } from '@crowdship/menu';
 
+import { EFFECT_FIRED_EVENT } from '../data/live-event';
+
 /**
  * The single place the web app decides which {@link LiveFeed} it runs against
  * [LAW:one-source-of-truth] — the real-time twin of `getIngestBroker()` and
@@ -30,10 +32,12 @@ import type { Effect, EffectReceipt } from '@crowdship/menu';
 const clock = new SystemClock();
 
 /** The kind every effect-fired live event carries — the open label a watcher's
- *  overlay routes on. A non-blank literal, so a blank is a broken invariant that
- *  halts loudly rather than minting a blank type [LAW:no-silent-failure]. */
+ *  overlay routes on, minted from the SAME wire label the watch surface parses on,
+ *  so publish and consume cannot drift to different spellings [LAW:one-source-of-truth].
+ *  A non-blank literal, so a blank is a broken invariant that halts loudly rather than
+ *  minting a blank type [LAW:no-silent-failure]. */
 const EFFECT_FIRED: LiveEventType = (() => {
-  const t = liveEventType('effect-fired');
+  const t = liveEventType(EFFECT_FIRED_EVENT);
   if (!t.ok) throw new Error('live-feed: minted a blank live event type');
   return t.value;
 })();
