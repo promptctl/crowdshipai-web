@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 
 import { SystemClock } from '@crowdship/identity-node';
 import {
+  channelRef,
   createInMemoryIngestBroker,
   ingestEndpoint,
   ingestKey,
@@ -23,7 +24,7 @@ import {
  * [LAW:one-source-of-truth] — the stream twin of `getAuthService()` and `getCatalog()`.
  * Every route and action that opens a builder's ingest reaches it through
  * `getIngestBroker()`, and every viewer mints its subscribe credential through
- * `mintViewerToken()`; both are resolved HERE, so the choice of media provider is a
+ * `viewerConnectionFor()`; both are resolved HERE, so the choice of media provider is a
  * change in this one file and nowhere else [LAW:single-enforcer][LAW:locality-or-seam].
  *
  * The provider is chosen by environment, not a code edit: with the `LIVEKIT_*`
@@ -38,6 +39,21 @@ import {
  * single enforcer — never two [LAW:single-enforcer][LAW:effects-at-boundaries].
  */
 
+/**
+ * Everything a browser needs to subscribe to a builder's live room, and nothing it
+ * does not: the PUBLIC wss endpoint and a short-lived subscribe-only token. The two
+ * travel as ONE value because they are useless apart and both absent together — on
+ * the in-memory fake there is no SFU, so the whole connection is `null`, an honest
+ * "nothing to subscribe to" rather than a url paired with a fabricated token
+ * [LAW:dataflow-not-control-flow][LAW:no-silent-failure]. The API secret is NOT here:
+ * it stays server-side in the signer and only its signature crosses to the browser
+ * [LAW:effects-at-boundaries].
+ */
+export interface ViewerConnection {
+  readonly url: string;
+  readonly token: string;
+}
+
 // Token and room lifetimes. A publish token spans a long building session; a subscribe
 // token is short and re-minted per viewer load. The timeouts are how long LiveKit keeps
 // an idle room before reaping it — long enough to survive a brief builder reconnect.
@@ -50,13 +66,13 @@ const DEPARTURE_TIMEOUT_SECONDS = 2 * 60;
  * One media provider the app resolves to: the ingest broker a builder opens through and
  * the viewer-token mint a watcher reuses. Bundling them makes the shared-auth guarantee
  * structural — both come from the same construction, so they cannot drift onto different
- * credentials [LAW:single-enforcer]. `mintViewerToken` is `null` when no real SFU backs
+ * credentials [LAW:single-enforcer]. `viewerConnection` is `null` when no real SFU backs
  * the app (the in-memory fake), an honest absence the viewer transport handles as data
  * rather than a fabricated token [LAW:no-silent-failure].
  */
 interface StreamProvider {
   readonly broker: IngestBroker;
-  mintViewerToken(channel: ChannelRef, viewerIdentity: string): Promise<string | null>;
+  viewerConnection(channel: ChannelRef, viewerIdentity: string): Promise<ViewerConnection | null>;
 }
 
 interface LiveKitConfig {
@@ -101,8 +117,13 @@ const buildLiveKit = (cfg: LiveKitConfig): StreamProvider => {
   });
   return {
     broker,
-    mintViewerToken: (channel, viewerIdentity) =>
-      mintSubscribeToken(sign, channel, viewerIdentity, SUBSCRIBE_TTL_SECONDS),
+    // The viewer subscribes over the SAME public wss URL the builder publishes to, with
+    // a token from the SAME signer the broker's `open` uses — publish and subscribe are
+    // two values of one auth, never two systems that could drift [LAW:single-enforcer].
+    viewerConnection: async (channel, viewerIdentity) => ({
+      url: cfg.url,
+      token: await mintSubscribeToken(sign, channel, viewerIdentity, SUBSCRIBE_TTL_SECONDS),
+    }),
   };
 };
 
@@ -140,9 +161,9 @@ const buildInMemory = (): StreamProvider => ({
     },
     endpointFor,
   }),
-  // The fake has no SFU, so there is no real subscribe token — an honest null, not a
-  // fabricated credential [LAW:no-silent-failure].
-  mintViewerToken: () => Promise.resolve(null),
+  // The fake has no SFU, so there is no real connection to hand a viewer — an honest
+  // null, not a url paired with a fabricated token [LAW:no-silent-failure].
+  viewerConnection: () => Promise.resolve(null),
 });
 
 const build = (): StreamProvider => {
@@ -160,9 +181,26 @@ if (process.env.NODE_ENV !== 'production') globalForStream.__crowdshipStream = p
 export const getIngestBroker = (): IngestBroker => provider.broker;
 
 /**
- * Mint a viewer's subscribe-only credential for a channel — the shared-auth seam the
- * viewer transport (evf.2.1) consumes. Returns `null` when the app runs on the
- * in-memory fake (no real media to subscribe to).
+ * The ONE mapping from a channel's public URL slug to the opaque stream `ChannelRef`
+ * that names its LiveKit room [LAW:one-source-of-truth]. A viewer derives the builder's
+ * room from the slug here, and the builder's go-live flow (evf.1.2) MUST mint the same
+ * ref the same way, so both name the identical room without re-deriving it. The slug is
+ * already a URL-safe, non-blank handle — a fitting room name — so a blank ref can only
+ * be a programming error and is surfaced loudly, never papered over [LAW:no-silent-failure].
  */
-export const mintViewerToken = (channel: ChannelRef, viewerIdentity: string): Promise<string | null> =>
-  provider.mintViewerToken(channel, viewerIdentity);
+const channelRefForSlug = (slug: string): ChannelRef => {
+  const ref = channelRef(slug);
+  if (!ref.ok) throw new Error('stream: cannot derive a channel ref from blank slug');
+  return ref.value;
+};
+
+/**
+ * The viewer-subscribe seam the watch surface (evf.2.1) consumes: everything a browser
+ * needs to subscribe to a builder's live room, addressed by the channel's public slug.
+ * Returns `null` when the app runs on the in-memory fake (no real media to subscribe to)
+ * — an honest absence the player renders as the not-live placeholder, never a fabricated
+ * credential [LAW:no-silent-failure]. The viewer identity is unique per call so many
+ * viewers of one builder coexist under LiveKit's one-connection-per-identity rule.
+ */
+export const viewerConnectionFor = (slug: string, viewerIdentity: string): Promise<ViewerConnection | null> =>
+  provider.viewerConnection(channelRefForSlug(slug), viewerIdentity);

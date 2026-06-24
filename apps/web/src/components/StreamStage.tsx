@@ -1,23 +1,36 @@
+import type { ReactNode } from 'react';
+
 import { LiveBadge } from './LiveBadge';
 
 /**
  * The placeholder for the video itself — the atomic primitive of the whole
- * product, standing in until real ingest/playback (the stream epic) lands behind
- * this same box. The builder's `accentHue` drives a per-channel gradient and a
- * faux editor frame so the grid reads as many distinct live builds, not one
- * template. `size` is a value the one component varies on, not a second
- * component [LAW:one-type-per-behavior].
+ * product. On the browse grid it stands alone (a per-channel gradient + faux
+ * editor frame so the grid reads as many distinct live builds, not one template);
+ * on the watch surface the real player binds behind this SAME box via `overlay`,
+ * so the placeholder was always the seam the live video layers over and nothing
+ * else on the surface moves [LAW:locality-or-seam]. `size` and `overlay` are
+ * values the one component varies on, not second components [LAW:one-type-per-behavior].
+ *
+ * Layering, painted back-to-front: the faux editor and the "back later" curtain
+ * sit at the base; `overlay` (the live `<video>`) covers them when it carries a
+ * track and reveals them when it does not; the live badge paints last, always on
+ * top of the video. An absent `overlay` is the honest grid case — no live layer at
+ * all — not a guard [LAW:no-defensive-null-guards].
  */
 export function StreamStage({
   accentHue,
   isLive,
   viewerCount,
   size = 'card',
+  overlay,
 }: {
   readonly accentHue: number;
   readonly isLive: boolean;
   readonly viewerCount: number;
   readonly size?: 'card' | 'stage';
+  /** The live video layer to bind behind this box on the watch surface; absent on
+   *  the grid, where the placeholder stands alone. */
+  readonly overlay?: ReactNode;
 }) {
   const isStage = size === 'stage';
   return (
@@ -38,14 +51,15 @@ export function StreamStage({
           />
         ))}
       </div>
-      <div className="absolute left-2.5 top-2.5">
-        <LiveBadge isLive={isLive} viewerCount={viewerCount} />
-      </div>
       {!isLive && (
         <div className="absolute inset-0 grid place-items-center bg-ink/55 text-xs text-fog">
           back later
         </div>
       )}
+      {overlay}
+      <div className="absolute left-2.5 top-2.5">
+        <LiveBadge isLive={isLive} viewerCount={viewerCount} />
+      </div>
     </div>
   );
 }
