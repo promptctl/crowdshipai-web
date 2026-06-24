@@ -34,6 +34,12 @@ export interface StreamSummary {
   /** Open labels the builder tagged the stream with — never a closed enum we own. */
   readonly tags: readonly string[];
   readonly viewerCount: number;
+  /**
+   * Whether the builder is broadcasting right now — DERIVED state the catalog
+   * assembles from the stream provider (the LiveKit room is the single authority),
+   * synchronized at read, never a stored flag the catalog could let drift from
+   * reality [LAW:one-source-of-truth].
+   */
   readonly isLive: boolean;
   /** A stable hue (0–360) used to render a placeholder thumbnail until real video exists. */
   readonly accentHue: number;

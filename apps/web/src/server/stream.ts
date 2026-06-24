@@ -218,6 +218,24 @@ export const channelRefForSlug = (slug: string): ChannelRef => {
 };
 
 /**
+ * Is the builder on `slug` live right now? Derived from the provider's room state — the
+ * LiveKit room (or the in-memory fake standing in for it) is the SINGLE authority for
+ * liveness, read through the broker's `forChannel`, never a stored flag that could drift
+ * from reality [LAW:one-source-of-truth][LAW:single-enforcer]. A room provisioned by the
+ * builder's go-live (evf.1.2) is a live session; its absence — never went live, or
+ * ended/reaped — is honestly "offline", and on the in-memory fake (no builder has opened
+ * an ingest) every channel reads offline rather than a fabricated badge [LAW:no-silent-failure].
+ *
+ * This is provisioned-liveness, the question this surface needs: the room exists exactly
+ * between go-live and end, lingering through a brief reconnect (the broker's empty
+ * timeout) so a momentary track drop reads as still-live instead of flapping the badge.
+ * Distinguishing reconnecting from ended is the lifecycle owner's concern (evf.6), not
+ * this read [LAW:decomposition].
+ */
+export const isChannelLive = (slug: string): Promise<boolean> =>
+  provider.broker.forChannel(channelRefForSlug(slug)).then((session) => session !== null);
+
+/**
  * The viewer-subscribe seam the watch surface (evf.2.1) consumes: everything a browser
  * needs to subscribe to a builder's live room, addressed by the channel's public slug.
  * Returns `null` when the app runs on the in-memory fake (no real media to subscribe to)
