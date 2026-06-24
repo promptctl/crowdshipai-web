@@ -13,6 +13,7 @@ import { buyCoins, buyOffer } from '@/server/market-actions';
 import { BuilderAvatar } from './BuilderAvatar';
 import { Chat } from './Chat';
 import { Menu } from './Menu';
+import { StreamPlayer } from './StreamPlayer';
 import { StreamStage } from './StreamStage';
 
 /**
@@ -267,7 +268,13 @@ export function WatchSurface({
     <main className="mx-auto max-w-7xl px-5 py-6">
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_340px]">
         <div>
-          <StreamStage accentHue={stream.accentHue} isLive={stream.isLive} viewerCount={viewerCount} size="stage" />
+          <StreamStage
+            accentHue={stream.accentHue}
+            isLive={stream.isLive}
+            viewerCount={viewerCount}
+            size="stage"
+            overlay={<StreamPlayer slug={stream.slug} />}
+          />
           <div className="mt-4 flex items-start gap-3">
             <BuilderAvatar accentHue={stream.accentHue} className="h-11 w-11" />
             <div className="min-w-0">
