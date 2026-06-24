@@ -36,7 +36,7 @@ export default function RootLayout({ children }: { readonly children: React.Reac
               </Link>
               <AuthNav />
               <Link
-                href="/account"
+                href="/studio"
                 className="rounded-full border border-accent-dim bg-accent/10 px-3 py-1.5 font-semibold text-accent transition-colors hover:bg-accent hover:text-ink"
               >
                 go live
