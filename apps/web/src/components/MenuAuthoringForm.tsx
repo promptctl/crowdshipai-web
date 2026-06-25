@@ -75,6 +75,8 @@ const resultNotice = (result: Exclude<MenuAuthorResult, { kind: 'saved' }>): str
       return 'Sign in to author your menu.';
     case 'no-channel':
       return 'Claim a channel before authoring a menu.';
+    case 'malformed-submission':
+      return 'Your menu submission was malformed — reload the page and try again.';
     case 'invalid-prices':
       return `Prices must be whole numbers of coins (offers ${result.at
         .map((i) => i + 1)

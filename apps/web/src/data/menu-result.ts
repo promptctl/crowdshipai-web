@@ -10,6 +10,12 @@ import type { MenuProblems } from '@crowdship/menu';
  * - `must-authenticate` — no session; you cannot author a menu as no one.
  * - `no-channel` — a signed-in account that has not claimed a channel has nothing to
  *   author a menu against; claim first.
+ * - `malformed-submission` — the form payload itself was not a well-formed list of
+ *   offers (a tampered or broken client; the real form can only ever submit valid
+ *   JSON). The failure is surfaced through this arm rather than thrown, so it flows
+ *   through the same outcome channel every other refusal does and the form renders it
+ *   [LAW:dataflow-not-control-flow] — loud, never swallowed into an empty menu that
+ *   would wipe the builder's real one [LAW:no-silent-failure].
  * - `invalid-prices` — one or more prices were not whole numbers, located by position.
  *   This is the edge's string→number trust boundary, distinct from the domain's
  *   non-positive check, so the form can say exactly "that price is not a number".
@@ -24,5 +30,6 @@ export type MenuAuthorResult =
   | { readonly kind: 'saved'; readonly count: number }
   | { readonly kind: 'must-authenticate' }
   | { readonly kind: 'no-channel' }
+  | { readonly kind: 'malformed-submission' }
   | { readonly kind: 'invalid-prices'; readonly at: readonly number[] }
   | { readonly kind: 'invalid'; readonly problems: MenuProblems };

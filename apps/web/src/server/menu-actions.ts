@@ -8,16 +8,26 @@ import { currentPrincipal } from './principal';
 
 /**
  * Read the builder's submitted offers out of the form payload — the untrusted edge.
- * The client serializes its offer rows into one `offers` JSON field; a payload that
- * is not a JSON array of objects is a broken client, surfaced loudly rather than
- * silently treated as an empty menu that would WIPE the builder's real one
- * [LAW:no-silent-failure]. Each field is coerced to the string the pure core expects
- * (the core and `authorMenu` are the trust boundaries that judge the values); a missing
- * field becomes the empty string, which `authorMenu` rejects as blank.
+ * The client serializes its offer rows into one `offers` JSON field; a payload that is
+ * not a JSON array of objects is a broken or tampered client (the real form can only
+ * ever submit valid JSON). That failure is lifted to a `null` here — the parse
+ * exception caught and turned into a value at the boundary [LAW:effects-at-boundaries] —
+ * so {@link setMenuAction} can return it through the SAME typed outcome channel every
+ * other refusal uses [LAW:dataflow-not-control-flow], never as a thrown error that
+ * escapes the form's rendering, and never silently coerced to an empty menu that would
+ * WIPE the builder's real one [LAW:no-silent-failure]. Each field is coerced to the
+ * string the pure core expects (the core and `authorMenu` are the trust boundaries that
+ * judge the values); a missing field becomes the empty string, which `authorMenu`
+ * rejects as blank.
  */
-const readOffers = (formData: FormData): RawOffer[] => {
-  const parsed: unknown = JSON.parse(String(formData.get('offers') ?? '[]'));
-  if (!Array.isArray(parsed)) throw new Error('menu submission is not a list of offers');
+const readOffers = (formData: FormData): readonly RawOffer[] | null => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(formData.get('offers') ?? '[]'));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
   return parsed.map((entry): RawOffer => {
     const record = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>;
     return {
@@ -45,12 +55,14 @@ export async function setMenuAction(
   _prev: MenuAuthorResult | null,
   formData: FormData,
 ): Promise<MenuAuthorResult> {
+  const offers = readOffers(formData);
+  if (offers === null) return { kind: 'malformed-submission' };
   return performAuthorMenu(
     {
       principal: await currentPrincipal(),
       channelOf: (ownerId) => getChannelService().channelByOwner(ownerId),
       saveMenu: (channelId, menu) => getMenuStore().setMenu(channelId, menu),
     },
-    { offers: readOffers(formData) },
+    { offers },
   );
 }
