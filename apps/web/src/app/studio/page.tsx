@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { ClaimChannelForm } from '@/components/ClaimChannelForm';
 import { GoLiveControl } from '@/components/GoLiveControl';
 import { getChannelService } from '@/server/channels';
 import { currentPrincipal } from '@/server/principal';
@@ -28,10 +29,13 @@ export default async function StudioPage() {
     <main className="mx-auto max-w-3xl px-5 py-10">
       <h1 className="text-2xl font-bold tracking-tight text-chalk">studio</h1>
       {channel === undefined ? (
-        <p className="mt-4 max-w-xl text-sm text-fog">
-          You need a channel before you can go live. Claim your channel, then come back here to start
-          streaming.
-        </p>
+        <>
+          <p className="mt-4 max-w-xl text-sm text-fog">
+            You need a channel before you can go live. Claim your handle to become a builder, then
+            start streaming.
+          </p>
+          <ClaimChannelForm />
+        </>
       ) : (
         <>
           <p className="mt-2 text-sm text-fog">
