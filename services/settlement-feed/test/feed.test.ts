@@ -31,12 +31,13 @@ const leg = (
   counterparty: AccountId,
   resultingBalance: bigint,
   at: number,
+  reasonText?: string,
 ): AccountMovement => ({
   direction,
   amount: must(coinAmount(amount)),
   counterparty,
   resultingBalance,
-  reason: must(transactionReason(direction === 'credit' ? 'pool-contribution' : 'pool-release')),
+  reason: must(transactionReason(reasonText ?? (direction === 'credit' ? 'pool-contribution' : 'pool-release'))),
   occurredAt: must(timestamp(at)),
 });
 
@@ -67,11 +68,34 @@ describe('projectSettlement — the escrow history is the transparent feed', () 
     expect(feed.map((e) => e.pooledAfter)).toEqual([10n, 20n]);
   });
 
-  it('halts loudly on an escrow debit to an unrecognized party — money is never swallowed', () => {
-    // A settlement escrow's coins may only flow to the builder or the platform. A debit
-    // elsewhere is an integrity anomaly, surfaced rather than rendered as something benign
-    // [LAW:no-silent-failure].
-    const history: readonly AccountMovement[] = [leg('debit', 10n, acc('stranger'), 0n, 1_700_000_000_003)];
+  it('names a debit back to a prior contributor a refund — the failure mode shown in plain view', () => {
+    // An unmet pool returns each backer's stake: a debit to an account that funded the escrow
+    // earlier in this same history is a refund, named from the contributor set the projection
+    // folds as it walks [LAW:one-source-of-truth] — no new seam input.
+    const history: readonly AccountMovement[] = [
+      leg('credit', 20n, acc('backer-ami'), 20n, 1_700_000_000_001),
+      leg('credit', 30n, acc('backer-ben'), 50n, 1_700_000_000_002),
+      leg('debit', 20n, acc('backer-ami'), 30n, 1_700_000_000_003, 'pool-expired'),
+      leg('debit', 30n, acc('backer-ben'), 0n, 1_700_000_000_004, 'pool-expired'),
+    ];
+
+    expect(projectSettlement(history, roles).map(plain)).toEqual([
+      { kind: 'contribution', party: 'backer-ami', amount: 20n, pooledAfter: 20n, reason: 'pool-contribution', at: 1_700_000_000_001 },
+      { kind: 'contribution', party: 'backer-ben', amount: 30n, pooledAfter: 50n, reason: 'pool-contribution', at: 1_700_000_000_002 },
+      { kind: 'refund', party: 'backer-ami', amount: 20n, pooledAfter: 30n, reason: 'pool-expired', at: 1_700_000_000_003 },
+      { kind: 'refund', party: 'backer-ben', amount: 30n, pooledAfter: 0n, reason: 'pool-expired', at: 1_700_000_000_004 },
+    ]);
+  });
+
+  it('halts loudly on an escrow debit to a party that never contributed — money is never swallowed', () => {
+    // The refund arm shrank the anomaly arm but did not remove it: a debit to an account that
+    // is neither a payee NOR a prior contributor is still an integrity anomaly, surfaced rather
+    // than rendered as something benign [LAW:no-silent-failure]. Here ami DID contribute, so the
+    // set is non-empty, proving the check is specific to the actual contributor — not "anyone".
+    const history: readonly AccountMovement[] = [
+      leg('credit', 20n, acc('backer-ami'), 20n, 1_700_000_000_001),
+      leg('debit', 10n, acc('stranger'), 10n, 1_700_000_000_002),
+    ];
     expect(() => projectSettlement(history, roles)).toThrow(/unrecognized party/);
   });
 

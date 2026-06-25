@@ -1,4 +1,5 @@
-import { createCustodialRail, createReleaseEngine, type CutPolicy, type ObligationFacts } from '@crowdship/release';
+import { createReleaseEngine, type CutPolicy, type ObligationFacts } from '@crowdship/release';
+import { createCustodialRail } from '@crowdship/settlement-rail';
 import { describe, expect, it } from 'vitest';
 
 import { asEscrowedPledge, createPoolFunder, type Contribution } from '../src/index.js';

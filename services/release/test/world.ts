@@ -24,8 +24,9 @@ import {
 } from '@crowdship/settlement';
 import { timestamp, type Timestamp } from '@crowdship/std';
 
+import { createCustodialRail } from '@crowdship/settlement-rail';
+
 import {
-  createCustodialRail,
   createReleaseEngine,
   type CutPolicy,
   type Obligation,

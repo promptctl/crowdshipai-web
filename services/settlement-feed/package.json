@@ -13,8 +13,10 @@
   },
   "devDependencies": {
     "@crowdship/pool": "workspace:*",
+    "@crowdship/refund": "workspace:*",
     "@crowdship/release": "workspace:*",
     "@crowdship/settlement": "workspace:*",
+    "@crowdship/settlement-rail": "workspace:*",
     "@crowdship/std": "workspace:*"
   }
 }

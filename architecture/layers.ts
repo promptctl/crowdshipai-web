@@ -37,6 +37,11 @@ export const LAYERS = [
       'Binds an adopted runtime or vendor to a core behind a seam (node/sqlite, TigerBeetle). May depend on the runtime primitives, cores, and foundation.',
   },
   {
+    id: 'rail',
+    description:
+      'A domain money-movement seam that binds a ledger adapter into a higher-level settlement contract — "custodial now, on-chain later" made swappable — for services to share. May depend on adapters, cores, and foundation. It sits BELOW services on purpose: several settlement engines (release, refund) settle through this ONE seam, and a seam shared by services cannot live in any one of them without making a service depend on a service [LAW:one-way-deps] [LAW:one-type-per-behavior].',
+  },
+  {
     id: 'service',
     description:
       'A use-case that composes cores and adapters into one dataflow pipeline (e.g. purchase-to-fire: post coins, then fire the effect). The product surface drives it; it depends on no other service.',
@@ -74,9 +79,12 @@ const ASSIGN: Readonly<Record<string, RepoLayerId>> = {
   '@crowdship/payments-stripe': 'adapter',
   '@crowdship/stream-livekit': 'adapter',
 
+  '@crowdship/settlement-rail': 'rail',
+
   '@crowdship/on-ramp': 'service',
   '@crowdship/pool': 'service',
   '@crowdship/purchase': 'service',
+  '@crowdship/refund': 'service',
   '@crowdship/release': 'service',
   '@crowdship/settlement-feed': 'service',
 

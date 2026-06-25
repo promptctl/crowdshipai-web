@@ -16,10 +16,9 @@ import type {
   Released,
 } from '@crowdship/settlement';
 import { isMet, meetCondition, observeDeliverable, observeGoal, observePool, release } from '@crowdship/settlement';
+import type { SettlementRail } from '@crowdship/settlement-rail';
 import type { CoinAmount, Timestamp } from '@crowdship/std';
 import { coinAmount, timestamp } from '@crowdship/std';
-
-import type { SettlementRail } from './rail.js';
 
 /**
  * The concrete obligation terms the release engine requires a pledge to carry. The
@@ -269,7 +268,7 @@ export const createReleaseEngine = (deps: ReleaseEngineDeps): ReleaseEngine => {
     // Reconstruct the terminal pledge deterministically from the (unchanged) escrowed
     // pledge and the instant the settling movement was recorded — the same value the
     // original release produced.
-    const prior = await rail.settlementOf(pledge.id);
+    const prior = await rail.settlementOf('release', pledge.id);
     if (prior) {
       const at = asInstant(prior.occurredAt);
       const replayed = release(meetCondition(pledge, at), at);
@@ -300,6 +299,7 @@ export const createReleaseEngine = (deps: ReleaseEngineDeps): ReleaseEngine => {
     if (!toPlatform.ok) return { kind: 'invalid-routing', error: toPlatform.error };
 
     const settled = await rail.settle({
+      purpose: 'release',
       pledge: pledge.id,
       transfers: [toBuilder.value, toPlatform.value],
       reason,
