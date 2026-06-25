@@ -34,9 +34,12 @@ const systemClock: Clock = () => {
 
 /**
  * What a spent idempotency key holds: a `success` (replayable — its transfers and
- * timestamp recover the original receipt) or a `failed` attempt (the key is
- * terminally spent, mirroring how the real engine remembers a failed transfer id).
- * Either way the key is single-use [LAW:types-are-the-program].
+ * timestamp recover the original receipt) or a `failed` attempt — a movement that
+ * reached a *money rule* and lost (an overdraft), terminally spending the key just
+ * as the real engine remembers a failed transfer id. A post refused before any
+ * balance is read (an unopened account) records nothing here, so its key stays
+ * unspent: the distinction is whether the money was ever implicated
+ * [LAW:types-are-the-program].
  */
 type RecordedMovement =
   | {
@@ -120,7 +123,11 @@ export class InMemoryLedger implements Ledger, LedgerQuery {
     const net = netEffect(request.transfers);
     for (const [account, delta] of net) {
       const kind = this.#registry.get(account);
-      if (kind === undefined) return this.#fail(key, { kind: 'unknown-account', account });
+      // An account the ledger never opened is rejected before any balance is read,
+      // so it spends no key — nothing about the money is in question, and opening the
+      // account lets the identical movement succeed under this same key. Only a money
+      // rule poisons the key (below) [LAW:single-enforcer].
+      if (kind === undefined) return err({ kind: 'unknown-account', account });
       const resulting = (this.#balances.get(account) ?? 0n) + delta;
       if (resulting < 0n && !mayGoNegative(kind)) {
         return this.#fail(key, { kind: 'would-overdraft', account });
@@ -140,8 +147,10 @@ export class InMemoryLedger implements Ledger, LedgerQuery {
     return ok(this.#receipt(request, occurredAt));
   }
 
-  // A failed post spends its key: record the failure so a retry under the same key
-  // is refused, mirroring the engine remembering a failed transfer id.
+  // A money-rule failure (an overdraft) spends its key: record the failure so a retry
+  // under the same key is refused, mirroring the engine remembering a failed transfer
+  // id and forcing a real anomaly through reconciliation. An unopened-account refusal
+  // never reaches here — it records nothing, leaving its key unspent.
   #fail(key: string, error: PostError): Result<PostReceipt, PostError> {
     this.#movements.set(key, { kind: 'failed' });
     return err(error);
