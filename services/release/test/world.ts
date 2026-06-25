@@ -100,6 +100,12 @@ export const ledgerMissingBuilder = async (escrowFunds: bigint): Promise<Ledger>
   return ledger;
 };
 
+/** Opens the builder wallet on a ledger that started without it — the operator action that
+ *  fixes the recoverable refusal {@link ledgerMissingBuilder} sets up, so a release refused
+ *  for an unopened payee can be retried to success rather than stranding the escrow. */
+export const openBuilderAccount = (ledger: Ledger): Promise<Result<void, unknown>> =>
+  ledger.openAccount(account(BUILDER, 'user-wallet'));
+
 /** A cut taking 10% for the platform, the builder gets the rest — the default knob. */
 export const tenPercentCut: CutPolicy = (gross) => ({
   platformCut: coins(gross / 10n),

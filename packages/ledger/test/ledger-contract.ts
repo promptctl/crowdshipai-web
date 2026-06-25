@@ -86,17 +86,30 @@ export const ledgerContract = (ledgerOf: () => Ledger): void => {
       expect(await L.balanceOf(mint)).toBe(-500n);
     });
 
-    test('posting to an account the ledger never opened is refused and records nothing', async () => {
+    test('a post to an account the ledger never opened spends no key — opening it and retrying the SAME key succeeds', async () => {
       const L = ledgerOf();
       const { acc, key } = scope();
       const mint = acc('mint');
       const ghost = acc('ghost');
       must(await L.openAccount(account(mint, 'mint')));
 
-      const result = await L.post(move([leg(mint, ghost, 10n)], key('to-ghost')));
-      expect(result).toEqual({ ok: false, error: { kind: 'unknown-account', account: ghost } });
+      // Refused before any balance is touched: nothing moved. Crucially the key is NOT
+      // spent — an unopened account is a precondition not yet met, never a money anomaly,
+      // so it does not poison the key the way an overdraft does.
+      const k = key('to-ghost');
+      const refused = await L.post(move([leg(mint, ghost, 10n)], k));
+      expect(refused).toEqual({ ok: false, error: { kind: 'unknown-account', account: ghost } });
       expect(await L.balanceOf(mint)).toBe(0n);
       expect(await L.balanceOf(ghost)).toBe(0n);
+      expect(await L.commitOf(k)).toBeUndefined(); // nothing committed, and nothing spent
+
+      // Open the account that was missing and retry the IDENTICAL movement under the SAME
+      // key. Because the refusal spent no key, the corrected retry posts the coins — the
+      // recovery path that keeps an obligation from being stranded by a late-opened payee.
+      must(await L.openAccount(account(ghost, 'user-wallet')));
+      const retried = mustReceipt(await L.post(move([leg(mint, ghost, 10n)], k)));
+      expect(retried.balances.get(ghost)).toBe(10n);
+      expect(await L.balanceOf(ghost)).toBe(10n); // moved exactly once, under the same key
     });
 
     test('a movement that would overdraft a wallet is refused and not recorded', async () => {

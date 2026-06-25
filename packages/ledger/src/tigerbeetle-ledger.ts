@@ -300,6 +300,20 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
 
   async #submitFresh(request: PostRequest, reasonFp: bigint): Promise<Result<PostReceipt, PostError>> {
     const key = request.idempotencyKey;
+
+    // An account the engine never opened is a payee precondition not yet met, never a
+    // money anomaly: no balance is debited, credited, or even evaluated. But submitting
+    // the transfer anyway would make the engine remember its id as failed forever
+    // (`id_already_failed`), terminally spending the key for a movement that never
+    // touched the money — stranding, say, an escrow whose builder wallet was opened a
+    // moment too late. So the unopened account is caught HERE, before the transfer is
+    // submitted, leaving the key fresh for the corrected retry [LAW:single-enforcer].
+    // A money rule (overdraft) is the engine's alone and still spends the key below.
+    const accounts = touchedAccounts(request.transfers);
+    const open = new Set((await this.client.lookupAccounts(accounts.map(accountTbId))).map((a) => a.id));
+    const missing = accounts.find((a) => !open.has(accountTbId(a)));
+    if (missing !== undefined) return err({ kind: 'unknown-account', account: missing });
+
     const last = request.transfers.length - 1;
     const batch: TBTransfer[] = request.transfers.map((t, i) => ({
       id: legTbId(key, i),
@@ -358,19 +372,16 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
         return err({ kind: 'would-overdraft', account: leg.from });
       case CreateTransferStatus.exceeds_debits:
         return err({ kind: 'would-overdraft', account: leg.to });
-      case CreateTransferStatus.debit_account_not_found:
-        return err({ kind: 'unknown-account', account: leg.from });
-      case CreateTransferStatus.credit_account_not_found:
-        return err({ kind: 'unknown-account', account: leg.to });
       default:
         // The engine refused for a reason that is not a money rule. Under correct
-        // construction (the kernel forbids zero amounts and same-account transfers)
+        // construction (the kernel forbids zero amounts and same-account transfers, and
+        // the account pre-check above guarantees every account exists before submit)
         // this means the key's legs already exist because another process committed
         // this movement between our probe and submit — the in-process serializer
         // cannot order across processes. Re-probe and let the engine, the true single
         // authority on idempotency, say replay or conflict; a status with no recorded
-        // movement behind it is genuine corruption, halted loudly there
-        // [LAW:single-enforcer].
+        // movement behind it — an account-not-found for an account we just confirmed
+        // open, say — is genuine corruption, halted loudly there [LAW:single-enforcer].
         return this.#reclassifyAfterRace(request, reasonFp, cause.status);
     }
   }

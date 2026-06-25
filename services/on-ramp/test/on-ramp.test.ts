@@ -2,7 +2,7 @@ import { createInMemoryPaymentGateway, type PaymentGateway } from '@crowdship/pa
 import { describe, expect, it } from 'vitest';
 
 import { createCoinOnRamp } from '../src/index.js';
-import { buyRequest, key, MINT, must, onRampLedger, WALLET } from './world.js';
+import { buyRequest, MINT, must, onRampLedger, WALLET } from './world.js';
 
 describe('the on-ramp: fiat in, coins posted to the ledger', () => {
   it('charges the fiat and mints the coins to the wallet on a fresh buy', async () => {
@@ -69,12 +69,12 @@ describe('the on-ramp: fiat in, coins posted to the ledger', () => {
     expect(await ledger.balanceOf(MINT)).toBe(0n); // no coins minted against the taken fiat
   });
 
-  it('recovers a credit-refused buy with a fresh post key reusing the charge — the card never doubles', async () => {
-    // Reconciliation end to end. The first buy charges the backer but the mint refuses
-    // (wallet missing), spending its post key. The wallet is opened and the buy is
-    // recovered the only way the ledger allows: a FRESH post key, but the SAME charge
-    // key, so the fiat charge replays (no second charge) and the mint posts for the
-    // first time. Fiat once, coins once.
+  it('recovers a credit-refused buy under the SAME key once the wallet is opened — the card never doubles', async () => {
+    // Reconciliation end to end, the on-ramp's realistic refusal: the wallet was not yet
+    // opened, so the mint post is refused with unknown-account — which spends NO post key,
+    // because no balance was ever touched. Recovery needs no fresh key: open the wallet and
+    // retry the identical buy. The charge key is reused throughout, so the fiat is taken
+    // exactly once across the whole arc. Fiat once, coins once.
     const ledger = await onRampLedger(false);
     const gateway = createInMemoryPaymentGateway();
     const onRamp = createCoinOnRamp({ ledger, gateway, mint: MINT });
@@ -82,15 +82,15 @@ describe('the on-ramp: fiat in, coins posted to the ledger', () => {
     const refused = await onRamp.buy(buyRequest(100n, 2500n, 'recoverable'));
     expect(refused.kind).toBe('credit-refused');
     if (refused.kind !== 'credit-refused') throw new Error('unreachable');
+    expect(refused.error.kind).toBe('unknown-account');
 
-    // The refused post key is spent: retrying it verbatim is refused again, never a
-    // silent success — the ledger's contract, surfaced loudly.
-    const sameKey = await onRamp.buy(buyRequest(100n, 2500n, 'recoverable'));
-    expect(sameKey.kind).toBe('credit-refused');
+    // Retrying verbatim while the wallet is still missing is refused again — loudly, never a
+    // silent success — but it does not poison the key for the eventual recovery.
+    const stillMissing = await onRamp.buy(buyRequest(100n, 2500n, 'recoverable'));
+    expect(stillMissing.kind).toBe('credit-refused');
 
     must(await ledger.openAccount({ id: WALLET, kind: 'user-wallet' })); // the wallet now exists
-    const recovery = { ...buyRequest(100n, 2500n, 'recoverable'), idempotencyKey: key('mint-recoverable-retry') };
-    const healed = await onRamp.buy(recovery); // SAME charge key, FRESH post key
+    const healed = await onRamp.buy(buyRequest(100n, 2500n, 'recoverable')); // SAME charge AND post key
 
     expect(healed.kind).toBe('purchased');
     if (healed.kind !== 'purchased') throw new Error('unreachable');

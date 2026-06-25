@@ -41,11 +41,20 @@ export interface Ledger {
    *
    *  The idempotency key is *single-use*. A movement that succeeds is replayable:
    *  re-posting the identical movement under the same key returns the original
-   *  receipt and records nothing new, so a retry can never double-spend. A movement
-   *  that *fails* (overdraft, unknown account) still spends its key — the engine
-   *  remembers the failed attempt, so re-posting under that key is refused as
-   *  `idempotency-key-reused`; a corrected retry must use a fresh key. Reusing a key
-   *  for a *different* movement is likewise refused as a value. */
+   *  receipt and records nothing new, so a retry can never double-spend.
+   *
+   *  A failed post spends its key only when the failure turns on the *money*: an
+   *  overdraft is judged against the coins actually held, so the engine remembers
+   *  the failed attempt and re-posting under that key is refused as
+   *  `idempotency-key-reused` — a corrected retry needs a fresh key. That is the
+   *  point: a real money anomaly is forced through reconciliation, never silently
+   *  re-attempted. A post refused because it names an account the ledger never
+   *  opened spends NO key: the movement was rejected before any balance was touched
+   *  or any money rule evaluated, so nothing about the coins is in question. Opening
+   *  the account and re-posting the identical movement under the SAME key then
+   *  succeeds — the path a release takes to recover from a payee whose wallet had
+   *  not yet been opened, instead of stranding the escrow forever. Reusing a key for
+   *  a *different* movement is refused as a value. */
   post(request: PostRequest): Promise<Result<PostReceipt, PostError>>;
 
   /** The recorded balance of one account: positive coins held, negative for the
@@ -129,14 +138,20 @@ export type AccountConflict = {
 /**
  * Every way a post can fail *as a domain outcome*, as one closed union of values
  * the caller destructures — never thrown [LAW:dataflow-not-control-flow]. The
- * movement was empty, named an account the ledger has never opened, would push an
- * account below zero against its kind, or reused a key already spent on a
- * *different* movement.
+ * movement named an account the ledger has never opened, would push an account
+ * below zero against its kind, or reused a key already spent on a *different*
+ * movement.
  *
- * `idempotency-key-reused` covers every way a key is already spent: a prior
- * *successful* movement under it differs from this one, or a prior *failed* attempt
- * under it poisoned the key. (An identical replay of a prior success is not an
- * error — it returns the original receipt.)
+ * The three arms differ in what they say about the key, because they differ in
+ * whether the *money* was implicated. `unknown-account` is judged before any
+ * balance is read, so it spends no key: open the account and the identical movement
+ * succeeds under the same key. `would-overdraft` is judged against the coins held,
+ * so it spends its key and a corrected retry needs a fresh one — the reconciliation
+ * a real money anomaly is owed. `idempotency-key-reused` covers a key already spent
+ * on something other than this exact movement: a prior *successful* movement under
+ * it differs from this one, or a prior *overdraft* under it poisoned the key. (An
+ * identical replay of a prior success is not an error — it returns the original
+ * receipt.)
  *
  * A breach of the engine's own integrity — a malformed request the engine rejects
  * for a reason that should be impossible given these types, or an internal-id

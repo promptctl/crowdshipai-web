@@ -53,10 +53,14 @@ export interface OnRampRequest {
  * - `credit-refused` — fiat WAS charged but the ledger refused the mint (an
  *   unknown wallet, a reused key). The loud reconciliation case: the backer paid
  *   and holds no coins, so it carries the `charge` receipt proving the money is in
- *   [LAW:no-silent-failure]. A refused post SPENDS its idempotency key (the ledger's
- *   contract), so this is terminal under that key — recovery is the reconciler's: a
- *   retry under a FRESH post key, reusing the SAME charge key so the fiat is not
- *   taken again, or a refund of the charge. The loss is surfaced, never silent.
+ *   [LAW:no-silent-failure]. How it recovers turns on WHY the post was refused: an
+ *   unknown wallet spends no post key (the ledger judges it before any balance is
+ *   touched), so opening the wallet and retrying — the SAME charge key, so the fiat
+ *   is not taken again — lets the mint post under that very same key. That is the
+ *   on-ramp's realistic refusal, since its mint can never overdraft. A genuine key
+ *   conflict (a key already spent on a different movement) is terminal under that
+ *   key, recovered with a fresh post key reusing the same charge, or a refund. The
+ *   loss is surfaced, never silent.
  * - `invalid-routing` — the mint and the wallet are the same account, so no mint
  *   movement can be formed. Caught BEFORE any charge, so no money is taken for a
  *   credit that could never land.
@@ -109,10 +113,12 @@ export interface OnRampDeps {
  * purchase replays both receipts — charging the card and moving the mint exactly once;
  * a crash *before* the post runs heals the same way, since the post key is still unspent.
  *
- * The one asymmetry the ledger forces: a *refused* post spends its key, so a
- * `credit-refused` outcome is terminal under that key. Recovering it is the reconciler's
- * job — a fresh post key reusing the same charge key, or a refund — never a silent
- * same-key replay, exactly the loud reconciliation a paid-but-uncredited backer is owed.
+ * The asymmetry the ledger draws: a post refused on a *money rule* spends its key, but
+ * the on-ramp's mint can never overdraft, so its realistic refusal is an unopened wallet
+ * — which spends no key. A `credit-refused` from a missing wallet therefore recovers
+ * under the SAME post key once the wallet is opened, reusing the same charge key so the
+ * fiat is not taken twice; only a genuine key conflict needs a fresh post key or a refund.
+ * Either way the paid-but-uncredited backer is reconciled loudly, never a silent loss.
  */
 export const createCoinOnRamp = ({ ledger, gateway, mint }: OnRampDeps): CoinOnRamp => {
   const buy = async (request: OnRampRequest): Promise<OnRampOutcome> => {

@@ -14,6 +14,8 @@ import {
   goalResolved,
   ledgerMissingBuilder,
   ledgerWithEscrow,
+  must,
+  openBuilderAccount,
   PLATFORM,
   poolTarget,
 } from './world.js';
@@ -143,6 +145,44 @@ describe('a release that cannot be performed is surfaced loudly, never silent', 
     expect(outcome.error.kind).toBe('unknown-account');
     // The post is atomic: nothing moved, the coins are still in escrow.
     expect(await ledger.balanceOf(ESCROW)).toBe(500n);
+  });
+
+  it('recovers a release refused for an unopened payee: open the wallet, retry, coins move exactly once', async () => {
+    // The bug this ticket fixes (ml5). The settlement key is derived from the immutable
+    // pledge id alone, so a refused release that terminally spent the key would strand
+    // the escrow forever — a met, funded obligation that can never be paid. The fix lives
+    // in the ledger (an unopened account spends no key), so the SAME pledge, settling under
+    // the SAME key, recovers once the operator opens the wallet [LAW:locality-or-seam].
+    const ledger = await ledgerMissingBuilder(500n);
+    const engine = engineOver(ledger, facts({}));
+    const pledge = escrowedPledge('pl-recover', 500n, poolTarget(500n));
+
+    // The builder wallet was never opened, so the first attempt is refused. The coins stay
+    // in escrow and — the crux — the pledge's only settlement key is NOT terminally spent.
+    const refused = await engine.tryRelease(pledge);
+    expect(refused.kind).toBe('release-refused');
+    if (refused.kind !== 'release-refused') throw new Error('unreachable');
+    expect(refused.error.kind).toBe('unknown-account');
+    expect(await ledger.balanceOf(ESCROW)).toBe(500n);
+
+    // The operator fixes the recoverable cause: opens the builder wallet. The retry now
+    // releases instead of being refused forever — the escrow is no longer stranded.
+    must(await openBuilderAccount(ledger));
+    const released = await engine.tryRelease(pledge);
+
+    expect(released.kind).toBe('released');
+    if (released.kind !== 'released') throw new Error('unreachable');
+    expect(released.pledge.releasedAt).toBe(AT);
+    expect(await ledger.balanceOf(BUILDER)).toBe(450n);
+    expect(await ledger.balanceOf(PLATFORM)).toBe(50n);
+    expect(await ledger.balanceOf(ESCROW)).toBe(0n); // the pool drained exactly once
+
+    // And the now-settled pledge replays as already-released: the whole refuse → fix →
+    // retry arc still moves the coins at most once, the e5a.6 idempotency intact.
+    const replay = await engine.tryRelease(pledge);
+    expect(replay.kind).toBe('already-released');
+    expect(await ledger.balanceOf(BUILDER)).toBe(450n);
+    expect(await ledger.balanceOf(ESCROW)).toBe(0n);
   });
 
   it('reports a misrouted obligation (escrow paying itself) as invalid-routing', async () => {
