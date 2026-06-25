@@ -56,6 +56,9 @@ importers:
       '@crowdship/payments':
         specifier: workspace:*
         version: link:../../packages/payments
+      '@crowdship/pool':
+        specifier: workspace:*
+        version: link:../../services/pool
       '@crowdship/presence':
         specifier: workspace:*
         version: link:../../packages/presence
@@ -65,6 +68,12 @@ importers:
       '@crowdship/rate-limit':
         specifier: workspace:*
         version: link:../../packages/rate-limit
+      '@crowdship/release':
+        specifier: workspace:*
+        version: link:../../services/release
+      '@crowdship/settlement-rail':
+        specifier: workspace:*
+        version: link:../../packages/settlement-rail
       '@crowdship/std':
         specifier: workspace:*
         version: link:../../packages/std
