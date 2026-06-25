@@ -9,3 +9,5 @@ coverage/
 .env*.local
 .dev.vars
 .data/
+test-results/
+playwright-report/
