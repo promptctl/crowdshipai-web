@@ -145,6 +145,23 @@ describe('SqliteChannelStore: claiming a channel persists it and grants builder 
     expect(await reread.channelByHandle(must(handle('before')))).toBeUndefined();
   });
 
+  test('allChannels reads back every claimed channel from disk — the roster read', async () => {
+    const { db, auth, channels } = build();
+    const a = await aBacker(auth, 'one@crowdship.dev');
+    const b = await aBacker(auth, 'two@crowdship.dev');
+    const first = must(await channels.claimChannel(a, must(handle('builder_one')), aProfile('One', 'first')));
+    const second = must(await channels.claimChannel(b, must(handle('builder_two')), aProfile('Two')));
+
+    // A fresh store with no in-process state reads both channels from the database,
+    // each rebuilt through the same trust boundary a single lookup uses.
+    const reread = new SqliteChannelStore(db);
+    const all = await reread.allChannels();
+    expect(new Set(all)).toEqual(new Set([first.channel, second.channel]));
+
+    // An empty table is an empty roster, not an error.
+    expect(await new SqliteChannelStore(openIdentityDb(':memory:')).allChannels()).toEqual([]);
+  });
+
   test('a channel with an empty bio round-trips', async () => {
     const { db, auth, channels } = build();
     const owner = await aBacker(auth, 'nobio@crowdship.dev');
