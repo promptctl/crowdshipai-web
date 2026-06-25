@@ -235,6 +235,35 @@ means a missing type. Go close the gap.
 
 ---
 
+## "Finished" means exercisable in the app
+
+A piece is not finished when its tests pass. It is finished when it can be
+**exercised within the running app in some way** — driven by a user, surfaced on an
+admin panel, or shown in a visualization. Tests prove a unit *behaves*; only an
+in-app surface proves the seam to the product actually *connects* and that the work
+does something for CrowdShip. **An epic is not done until at least one vertical
+slice of it is exercisable in the app.**
+
+- **Design in vertical slices, not horizontal layers.** Cut each piece so it
+  reaches from the logic all the way to a surface a person can drive, however thin
+  [LAW:decomposition]. An engine with no caller is a horizontal layer: inert until
+  everything above it lands, earning nothing and accruing carrying cost the whole
+  time [LAW:carrying-cost].
+- **The surface can be small, and need not be the consumer flow.** A large system
+  does not have to be fully integrated to finish one part. A visualization, an
+  admin/debug view, or a subset of the functionality is a valid way to exercise a
+  piece — pick the thinnest surface that lets a human see the part do its thing.
+- **Marking tested-but-unsurfaced work "done" is a lie about completeness**
+  [FRAMING:representation], [LAW:no-silent-failure]. The settlement engine shipped
+  green and was called done while none of it was reachable; this rule exists so
+  that does not recur. When closing a ticket, name how the work is exercised in the
+  app — if you cannot, it is not done.
+
+This is [LAW:verifiable-goals] sharpened: "done" has a checkable shape, and the
+shape is "exercise it in the app," never "the suite is green."
+
+---
+
 ## Open decisions (not yet made)
 
 - Custodial vs. on-chain settlement for v1 (lean: custodial now, on-chain headline
