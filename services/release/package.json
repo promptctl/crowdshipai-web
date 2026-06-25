@@ -11,6 +11,7 @@
     "@crowdship/ledger": "workspace:*",
     "@crowdship/ledger-kernel": "workspace:*",
     "@crowdship/settlement": "workspace:*",
+    "@crowdship/settlement-rail": "workspace:*",
     "@crowdship/std": "workspace:*"
   }
 }

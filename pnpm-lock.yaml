@@ -226,6 +226,18 @@ importers:
         specifier: workspace:*
         version: link:../std
 
+  packages/settlement-rail:
+    dependencies:
+      '@crowdship/ledger':
+        specifier: workspace:*
+        version: link:../ledger
+      '@crowdship/ledger-kernel':
+        specifier: workspace:*
+        version: link:../ledger-kernel
+      '@crowdship/settlement':
+        specifier: workspace:*
+        version: link:../settlement
+
   packages/std: {}
 
   packages/stream:
@@ -276,6 +288,9 @@ importers:
       '@crowdship/release':
         specifier: workspace:*
         version: link:../release
+      '@crowdship/settlement-rail':
+        specifier: workspace:*
+        version: link:../../packages/settlement-rail
 
   services/purchase:
     dependencies:
@@ -289,6 +304,28 @@ importers:
         specifier: workspace:*
         version: link:../../packages/menu
 
+  services/refund:
+    dependencies:
+      '@crowdship/ledger':
+        specifier: workspace:*
+        version: link:../../packages/ledger
+      '@crowdship/ledger-kernel':
+        specifier: workspace:*
+        version: link:../../packages/ledger-kernel
+      '@crowdship/settlement':
+        specifier: workspace:*
+        version: link:../../packages/settlement
+      '@crowdship/settlement-rail':
+        specifier: workspace:*
+        version: link:../../packages/settlement-rail
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../../packages/std
+    devDependencies:
+      '@crowdship/pool':
+        specifier: workspace:*
+        version: link:../pool
+
   services/release:
     dependencies:
       '@crowdship/ledger':
@@ -300,6 +337,9 @@ importers:
       '@crowdship/settlement':
         specifier: workspace:*
         version: link:../../packages/settlement
+      '@crowdship/settlement-rail':
+        specifier: workspace:*
+        version: link:../../packages/settlement-rail
       '@crowdship/std':
         specifier: workspace:*
         version: link:../../packages/std
@@ -316,12 +356,18 @@ importers:
       '@crowdship/pool':
         specifier: workspace:*
         version: link:../pool
+      '@crowdship/refund':
+        specifier: workspace:*
+        version: link:../refund
       '@crowdship/release':
         specifier: workspace:*
         version: link:../release
       '@crowdship/settlement':
         specifier: workspace:*
         version: link:../../packages/settlement
+      '@crowdship/settlement-rail':
+        specifier: workspace:*
+        version: link:../../packages/settlement-rail
       '@crowdship/std':
         specifier: workspace:*
         version: link:../../packages/std

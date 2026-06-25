@@ -32,12 +32,15 @@ export interface SettlementRoles {
  *    "ten people with twenty dollars each" filling the bar in view of the stream.
  *  - `release` — coins left escrow to the builder: their share of the shipped pool.
  *  - `cut` — coins left escrow to the platform: the spread skimmed, in plain view.
+ *  - `refund` — coins left escrow back to a backer: their stake returned when the obligation
+ *    was unmet or contested, the failure mode shown as plainly as the success. The audience
+ *    watches a backer made whole, not coins quietly vanishing.
  *
  * `pooledAfter` is the same concept on every arm — the escrow balance immediately after
  * this movement, read straight from the ledger's recorded history. It is `bigint`, not
- * `CoinAmount`, precisely because it can be zero (a release drains the escrow): a
- * post-movement balance is a reading, not a movement, so a strictly-positive coin type
- * would be too strong and false. `amount` is the leg itself, always at least one coin.
+ * `CoinAmount`, precisely because it can be zero (a release or a final refund drains the
+ * escrow): a post-movement balance is a reading, not a movement, so a strictly-positive coin
+ * type would be too strong and false. `amount` is the leg itself, always at least one coin.
  */
 export type SettlementEvent =
   | {
@@ -63,6 +66,14 @@ export type SettlementEvent =
       readonly pooledAfter: bigint;
       readonly reason: TransactionReason;
       readonly at: Timestamp;
+    }
+  | {
+      readonly kind: 'refund';
+      readonly backer: AccountId;
+      readonly amount: CoinAmount;
+      readonly pooledAfter: bigint;
+      readonly reason: TransactionReason;
+      readonly at: Timestamp;
     };
 
 /**
@@ -78,13 +89,19 @@ export type SettlementEvent =
  * The classification is TOTAL and LOUD on both arms — every recorded movement maps to exactly
  * one named event or halts the projection, so a money feed can never silently misrepresent a
  * movement [LAW:no-silent-failure]. A settlement escrow is funded only by backers, so a credit
- * FROM its own payee, and a debit to anyone but the builder or platform, are both integrity
- * anomalies surfaced rather than rendered as something benign. (The refund path to backers
- * lands additively in a later ticket: a debit to an account that appears as a contributor in
- * this same history gains its own `refund` meaning, shrinking the anomaly arm — the contributor
- * set is already in the history, so no new seam input is needed.)
+ * FROM its own payee is an integrity anomaly. On the debit side the coins may flow three ways:
+ * to the builder (a release), to the platform (the cut), or BACK to a backer (a refund). A
+ * backer is recognised with no new seam input — the contributor set is already in this very
+ * history, the credit counterparties seen so far [LAW:one-source-of-truth] — so `contributors`
+ * is folded as the projection walks the history oldest-first and a debit to a known contributor
+ * is a refund. Only a debit to a party that has neither been paid as builder/platform NOR ever
+ * contributed remains the loud anomaly.
  */
-const project = (movement: AccountMovement, roles: SettlementRoles): SettlementEvent => {
+const project = (
+  movement: AccountMovement,
+  roles: SettlementRoles,
+  contributors: ReadonlySet<AccountId>,
+): SettlementEvent => {
   const { direction, amount, counterparty, resultingBalance, reason, occurredAt } = movement;
   const common = { amount, pooledAfter: resultingBalance, reason, at: occurredAt } as const;
 
@@ -103,9 +120,12 @@ const project = (movement: AccountMovement, roles: SettlementRoles): SettlementE
   if (counterparty === roles.platform) {
     return { kind: 'cut', platform: counterparty, ...common };
   }
+  if (contributors.has(counterparty)) {
+    return { kind: 'refund', backer: counterparty, ...common };
+  }
   throw new Error(
     `settlement escrow ${roles.escrow} was debited to an unrecognized party ${counterparty}; ` +
-      `a settlement escrow's coins may only flow to the builder or the platform`,
+      `a settlement escrow's coins may only flow to the builder, the platform, or back to a backer`,
   );
 };
 
@@ -123,6 +143,13 @@ const project = (movement: AccountMovement, roles: SettlementRoles): SettlementE
  * the feed; a money feed never swallows a movement, so a collision halts loudly rather than
  * mislabelling [LAW:no-silent-failure]. (Distinctness cannot be stated in the type, so it is a
  * precondition on an illegal argument, not an effect.)
+ *
+ * The contributor set is folded HERE as the walk proceeds, not taken as an input: a backer is
+ * exactly a credit counterparty seen earlier in this same history, so the set is derived from
+ * the projection's own `contribution` events and a later debit to one of them is named a refund
+ * [LAW:one-source-of-truth]. This is well-defined precisely because the history is oldest-first
+ * — a contribution is always recorded before the refund that returns it, so the contributor is
+ * in the set by the time its refund is projected [LAW:no-ambient-temporal-coupling].
  */
 export const projectSettlement = (
   history: readonly AccountMovement[],
@@ -134,7 +161,12 @@ export const projectSettlement = (
         `the release share and the cut could not be told apart`,
     );
   }
-  return history.map((movement) => project(movement, roles));
+  const contributors = new Set<AccountId>();
+  return history.map((movement) => {
+    const event = project(movement, roles, contributors);
+    if (event.kind === 'contribution') contributors.add(event.backer);
+    return event;
+  });
 };
 
 /**

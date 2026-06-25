@@ -29,5 +29,7 @@ export const plain = (event: SettlementEvent): PlainEvent => {
       return { kind: event.kind, party: String(event.builder), ...money };
     case 'cut':
       return { kind: event.kind, party: String(event.platform), ...money };
+    case 'refund':
+      return { kind: event.kind, party: String(event.backer), ...money };
   }
 };

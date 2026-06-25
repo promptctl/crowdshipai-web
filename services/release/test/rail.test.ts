@@ -2,12 +2,8 @@ import type { Ledger, MovementCommit } from '@crowdship/ledger';
 import { idempotencyKey, transactionReason, type TransactionReason } from '@crowdship/ledger-kernel';
 import { describe, expect, it } from 'vitest';
 
-import {
-  createCustodialRail,
-  createReleaseEngine,
-  type ReleaseEngine,
-  type SettlementRail,
-} from '../src/index.js';
+import { createCustodialRail, type SettlementRail } from '@crowdship/settlement-rail';
+import { createReleaseEngine, type ReleaseEngine } from '../src/index.js';
 import {
   AT,
   BUILDER,
@@ -52,15 +48,15 @@ const engineOn = (ledger: Ledger, rail: SettlementRail): ReleaseEngine =>
 const recordingRail = (ledger: Ledger): SettlementRail => {
   const settled = new Map<string, MovementCommit>();
   return {
-    settlementOf: (pledge) => Promise.resolve(settled.get(pledge)),
-    settle: async ({ pledge, transfers, reason }) => {
+    settlementOf: (purpose, pledge) => Promise.resolve(settled.get(`${purpose}:${pledge}`)),
+    settle: async ({ purpose, pledge, transfers, reason }) => {
       const posted = await ledger.post({
         transfers,
         reason,
-        idempotencyKey: must(idempotencyKey(`alt-release:${pledge}`)),
+        idempotencyKey: must(idempotencyKey(`alt-${purpose}:${pledge}`)),
       });
       if (posted.ok) {
-        settled.set(pledge, {
+        settled.set(`${purpose}:${pledge}`, {
           transactionId: posted.value.transactionId,
           occurredAt: posted.value.occurredAt,
         });

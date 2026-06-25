@@ -1,15 +1,13 @@
-import {
-  createCustodialRail,
-  createReleaseEngine,
-  type CutPolicy,
-  type ObligationFacts,
-} from '@crowdship/release';
 import { asEscrowedPledge } from '@crowdship/pool';
+import { createRefundEngine } from '@crowdship/refund';
+import { createReleaseEngine, type CutPolicy, type ObligationFacts } from '@crowdship/release';
+import { refundReason } from '@crowdship/settlement';
+import { createCustodialRail } from '@crowdship/settlement-rail';
 import { describe, expect, it } from 'vitest';
 
 import { settlementFeed, type SettlementRoles } from '../src/index.js';
 import { plain } from './plain.js';
-import { AT, BUILDER, coins, ffmpegPool, fundedWorld, PLATFORM, POOL_ESCROW, reason } from './world.js';
+import { AT, BUILDER, coins, ffmpegPool, fundedWorld, must, PLATFORM, POOL_ESCROW, reason } from './world.js';
 
 /**
  * The whole point of a transparent obligation, end to end: many backers fund one pool, the
@@ -99,5 +97,47 @@ describe('the release happens in view of the stream', () => {
     expect(feed).toEqual([
       { kind: 'contribution', party: 'backer-ami', amount: 20n, pooledAfter: 20n, reason: 'pool-contribution', at: AT_MS },
     ]);
+  });
+});
+
+describe('the refund happens in view of the stream too', () => {
+  it('shows the contributions filling the pool, then each backer made whole when it never ships', async () => {
+    const pool = ffmpegPool(100n); // a target the contributions fall short of
+    const world = await fundedWorld(
+      [
+        { id: 'ami', funds: 50n },
+        { id: 'ben', funds: 50n },
+      ],
+      pool,
+    );
+
+    await world.contribute('ami', 20n, 'c-ami');
+    await world.contribute('ben', 20n, 'c-ben');
+
+    // Forty pooled against a hundred-coin target — it never ships, so the product surface
+    // refunds it through the REAL refund engine (a test-only dependency [LAW:one-way-deps]).
+    const engine = createRefundEngine({
+      query: world.ledger,
+      rail: createCustodialRail(world.ledger),
+    });
+    const refunded = await engine.tryRefund(asEscrowedPledge(pool, AT), must(refundReason('pool-expired')));
+    expect(refunded.kind).toBe('refunded');
+
+    const roles: SettlementRoles = { escrow: POOL_ESCROW, builder: BUILDER, platform: PLATFORM };
+    const feed = (await settlementFeed(world.ledger, roles)).map(plain);
+
+    // The whole story in plain view: the bar fills, then drains back to the backers — no release,
+    // no cut, every coin that came in going back out to the one who put it in.
+    expect(feed).toEqual([
+      { kind: 'contribution', party: 'backer-ami', amount: 20n, pooledAfter: 20n, reason: 'pool-contribution', at: AT_MS },
+      { kind: 'contribution', party: 'backer-ben', amount: 20n, pooledAfter: 40n, reason: 'pool-contribution', at: AT_MS },
+      { kind: 'refund', party: 'backer-ami', amount: 20n, pooledAfter: 20n, reason: 'pool-expired', at: AT_MS },
+      { kind: 'refund', party: 'backer-ben', amount: 20n, pooledAfter: 0n, reason: 'pool-expired', at: AT_MS },
+    ]);
+
+    // Nothing invented: the coins refunded equal the coins contributed.
+    const inflow = feed.filter((e) => e.kind === 'contribution').reduce((sum, e) => sum + e.amount, 0n);
+    const outflow = feed.filter((e) => e.kind === 'refund').reduce((sum, e) => sum + e.amount, 0n);
+    expect(outflow).toBe(inflow);
   });
 });

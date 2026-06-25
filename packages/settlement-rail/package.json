@@ -1,5 +1,5 @@
 {
-  "name": "@crowdship/pool",
+  "name": "@crowdship/settlement-rail",
   "version": "0.0.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -10,11 +10,6 @@
   "dependencies": {
     "@crowdship/ledger": "workspace:*",
     "@crowdship/ledger-kernel": "workspace:*",
-    "@crowdship/settlement": "workspace:*",
-    "@crowdship/std": "workspace:*"
-  },
-  "devDependencies": {
-    "@crowdship/release": "workspace:*",
-    "@crowdship/settlement-rail": "workspace:*"
+    "@crowdship/settlement": "workspace:*"
   }
 }
