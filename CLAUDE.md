@@ -179,6 +179,62 @@ want. Nothing else.
 
 ---
 
+## No work is ever "blocked on the user"
+
+This is absolute. **"I am blocked on the user" is not a valid state — it does not
+exist.** When you feel blocked, you are never blocked *on the user*; you are
+blocked on **your own lack of understanding** of what needs to happen. The user
+telling you what to do is exactly **one** resolution path out of many — and the
+*last* resort, not the default. The work is to close the understanding gap, and
+there is almost always a path to close it that doesn't route through the user at
+all.
+
+Before the thought "I need the user" is ever allowed to stand, exhaust the paths
+that actually resolve a misunderstanding:
+
+- **Read the code, the interface, the real thing.** Run the CLI, inspect the API,
+  read the source of truth. Most "I'm stuck" is "I haven't looked yet."
+- **Just do the external prerequisite — it's agent work.** A credential, a test
+  account, a sandbox, a signup, an API key: you go get it. Create the Stripe
+  test-mode account yourself. Provision the sandbox yourself. "Requires a live
+  account to build/verify against" is an instruction to *go make the account*,
+  never a reason to stall. If a step genuinely needs a real-world identity you
+  cannot hold (e.g. production KYC for actual payouts), you still drive everything
+  up to that line on test/sandbox infrastructure and keep moving — the *work* is
+  never parked on the user.
+- **Reason it out from intent and the laws.** A bug → fix it. Architecture →
+  build what most conforms. Feature/design → build what's most aligned with this
+  document and commit to it. "Figure it out" is the standing order.
+- **Ask a domain-expert subagent** prompted into the relevant expertise before you
+  ever consider asking the user.
+
+**The only thing that ever legitimately crosses to the user is an *irreducible*
+decision** — a genuine taste only they own, or a fact only they hold — and only
+*after* you have proven to yourself it is irreducible and not just understanding
+you haven't gone and gotten. Most apparent "preference" questions are answerable
+by understanding the product better; reach for `AskUserQuestion` having already
+ruled that out, with your recommendation first. A direction question is never a
+*block* regardless — it does not stop execution, because there is always lawful
+work to pull while it's open.
+
+**Never re-introduce this concept into the backlog.** A ticket framed as
+"external, user/ops-owned prerequisite, not codeable offline" is mis-framed.
+Re-frame it as the agent-actionable provisioning task it actually is, or fold it
+into the work that needs it. Do not create new tickets of this shape.
+
+Why this is a law here, not a preference: **"blocked on the user" is a
+representation that lies.** It tags a gap in *your* understanding as an external
+dependency, marks agent-doable work as undoable, and sends the next session
+confidently down a dead end — the exact failure `[LAW:no-silent-failure]` and
+`[FRAMING:representation]` forbid. Making it *structurally impossible* is
+`[LAW:types-are-the-program]` applied to process: it is an illegal state, so it
+must be unrepresentable — there is no path by which work legitimately comes to
+rest on the user. When something feels blocked on them, the constraint is wrong;
+the missing piece is your understanding, exactly as a hard implementation body
+means a missing type. Go close the gap.
+
+---
+
 ## Open decisions (not yet made)
 
 - Custodial vs. on-chain settlement for v1 (lean: custodial now, on-chain headline
