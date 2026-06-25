@@ -5,6 +5,7 @@ import type {
   Account,
   AccountId,
   AccountKind,
+  IdempotencyKey,
   Result,
   Timestamp,
 } from '@crowdship/ledger-kernel';
@@ -27,7 +28,14 @@ import type {
 
 import { touchedAccounts, transactionIdOf } from './movement.js';
 import { createInMemoryNameStore, type NameStore } from './name-store.js';
-import type { AccountConflict, Ledger, PostError, PostReceipt, PostRequest } from './port.js';
+import type {
+  AccountConflict,
+  Ledger,
+  MovementCommit,
+  PostError,
+  PostReceipt,
+  PostRequest,
+} from './port.js';
 import type { AccountMovement, LedgerQuery, MovementDirection } from './query.js';
 
 // tigerbeetle-node is a CommonJS native addon; under NodeNext ESM its enum exports
@@ -394,6 +402,19 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
     const [tbAccount] = await this.client.lookupAccounts([accountTbId(account)]);
     if (tbAccount === undefined) return 0n;
     return tbAccount.credits_posted - tbAccount.debits_posted;
+  }
+
+  // The movement committed under a key is recovered from the engine's own transfers,
+  // not a record we keep beside them [LAW:one-source-of-truth]: a movement always has
+  // a first leg, so the presence of leg 0 under this key *is* the proof it committed,
+  // and its engine timestamp is when. A key that only ever failed created no transfer
+  // (a rejected `createTransfers` records nothing), so leg 0 is absent and the commit
+  // is `undefined` — no money moved, no commit. The accounts the legs touched are not
+  // recovered: the seam promises only the commit a key identifies on its own.
+  async commitOf(key: IdempotencyKey): Promise<MovementCommit | undefined> {
+    const [first] = await this.client.lookupTransfers([legTbId(key, 0)]);
+    if (first === undefined) return undefined;
+    return { transactionId: transactionIdOf(key), occurredAt: nsToTimestamp(first.timestamp) };
   }
 
   // The balance as it stood at `asOf` is the engine's own recorded balance at the

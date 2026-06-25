@@ -1,5 +1,5 @@
 import {
-  createInMemoryReleaseLog,
+  createCustodialRail,
   createReleaseEngine,
   type CutPolicy,
   type ObligationFacts,
@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { settlementFeed, type SettlementRoles } from '../src/index.js';
 import { plain } from './plain.js';
-import { AT, BUILDER, clock, coins, ffmpegPool, fundedWorld, PLATFORM, POOL_ESCROW, reason } from './world.js';
+import { AT, BUILDER, coins, ffmpegPool, fundedWorld, PLATFORM, POOL_ESCROW, reason } from './world.js';
 
 /**
  * The whole point of a transparent obligation, end to end: many backers fund one pool, the
@@ -59,9 +59,8 @@ describe('the release happens in view of the stream', () => {
       facts: poolNeverUsesFacts,
       platformAccount: PLATFORM,
       cut: tenPercentCut,
-      clock,
       reason: reason('pool-release'),
-      log: createInMemoryReleaseLog(),
+      rail: createCustodialRail(world.ledger),
     });
     const released = await engine.tryRelease(asEscrowedPledge(pool, AT));
     expect(released.kind).toBe('released');

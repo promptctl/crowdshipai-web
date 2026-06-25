@@ -1,8 +1,8 @@
-import { createInMemoryReleaseLog, createReleaseEngine, type CutPolicy, type ObligationFacts } from '@crowdship/release';
+import { createCustodialRail, createReleaseEngine, type CutPolicy, type ObligationFacts } from '@crowdship/release';
 import { describe, expect, it } from 'vitest';
 
 import { asEscrowedPledge, createPoolFunder, type Contribution } from '../src/index.js';
-import { AT, BUILDER, clock, coins, ffmpegPool, fundedWorld, key, PLATFORM, POOL_ESCROW, reason } from './world.js';
+import { AT, BUILDER, coins, ffmpegPool, fundedWorld, key, PLATFORM, POOL_ESCROW, reason } from './world.js';
 
 /**
  * The whole point of a pooled obligation, end to end: many backers fund one pool, and the
@@ -65,9 +65,8 @@ describe('many backers, one target, one builder — the pool ships it live', () 
       facts: poolNeverUsesFacts,
       platformAccount: PLATFORM,
       cut: tenPercentCut,
-      clock,
       reason: reason('pool-release'),
-      log: createInMemoryReleaseLog(),
+      rail: createCustodialRail(world.ledger),
     });
 
     const outcome = await engine.tryRelease(asEscrowedPledge(pool, AT));
@@ -102,9 +101,8 @@ describe('many backers, one target, one builder — the pool ships it live', () 
       facts: poolNeverUsesFacts,
       platformAccount: PLATFORM,
       cut: tenPercentCut,
-      clock,
       reason: reason('pool-release'),
-      log: createInMemoryReleaseLog(),
+      rail: createCustodialRail(world.ledger),
     });
 
     const outcome = await engine.tryRelease(asEscrowedPledge(pool, AT));

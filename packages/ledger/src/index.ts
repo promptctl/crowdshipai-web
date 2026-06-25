@@ -1,6 +1,7 @@
 export type {
   AccountConflict,
   Ledger,
+  MovementCommit,
   PostError,
   PostReceipt,
   PostRequest,

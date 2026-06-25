@@ -3,6 +3,7 @@ import {
   accountId,
   coinAmount,
   idempotencyKey,
+  timestamp as ledgerTimestamp,
   transactionReason,
   transfer,
   type Account,
@@ -11,6 +12,7 @@ import {
   type IdempotencyKey,
   type Result,
   type TransactionReason,
+  type Timestamp as LedgerTimestamp,
 } from '@crowdship/ledger-kernel';
 import {
   deliverableId,
@@ -20,10 +22,10 @@ import {
   type Condition,
   type Escrowed,
 } from '@crowdship/settlement';
-import { timestamp, type Clock, type Timestamp } from '@crowdship/std';
+import { timestamp, type Timestamp } from '@crowdship/std';
 
 import {
-  createInMemoryReleaseLog,
+  createCustodialRail,
   createReleaseEngine,
   type CutPolicy,
   type Obligation,
@@ -56,10 +58,12 @@ export const BUILDER = acc('builder');
 export const PLATFORM = acc('platform-revenue');
 const MINT = acc('mint');
 
-/** A fixed clock — the boundary owns "now", and a deterministic instant makes the
- *  released pledge's timestamps assertable [LAW:no-ambient-temporal-coupling]. */
+/** A fixed instant the ledger records every movement at — the boundary owns "now", and a
+ *  deterministic moment makes the released pledge's timestamps assertable: a release
+ *  happens at the instant the rail's movement is recorded, so the pledge's `releasedAt`
+ *  is exactly this [LAW:no-ambient-temporal-coupling]. */
 export const AT: Timestamp = must(timestamp(1_700_000_000_000));
-export const clock: Clock = { now: () => AT };
+const LEDGER_AT: LedgerTimestamp = must(ledgerTimestamp(1_700_000_000_000));
 
 const fundEscrow = async (ledger: Ledger, escrowFunds: bigint): Promise<void> => {
   // Zero coins is a real state (an unfunded escrow) — there is simply no movement to post.
@@ -76,7 +80,7 @@ const fundEscrow = async (ledger: Ledger, escrowFunds: bigint): Promise<void> =>
 /** A ledger with the four accounts a release touches, the escrow holding `escrowFunds`
  *  coins (the coins backers pledged, already in escrow when the pledge opened). */
 export const ledgerWithEscrow = async (escrowFunds: bigint): Promise<Ledger> => {
-  const ledger = createInMemoryLedger();
+  const ledger = createInMemoryLedger(() => LEDGER_AT);
   must(await ledger.openAccount(account(MINT, 'mint')));
   must(await ledger.openAccount(account(ESCROW, 'escrow')));
   must(await ledger.openAccount(account(BUILDER, 'user-wallet')));
@@ -88,7 +92,7 @@ export const ledgerWithEscrow = async (escrowFunds: bigint): Promise<Ledger> => 
 /** A funded ledger whose builder account was never opened — so a release that tries to pay
  *  the builder is refused by the ledger (`unknown-account`), the realistic loud-refusal case. */
 export const ledgerMissingBuilder = async (escrowFunds: bigint): Promise<Ledger> => {
-  const ledger = createInMemoryLedger();
+  const ledger = createInMemoryLedger(() => LEDGER_AT);
   must(await ledger.openAccount(account(MINT, 'mint')));
   must(await ledger.openAccount(account(ESCROW, 'escrow')));
   must(await ledger.openAccount(account(PLATFORM, 'platform-revenue')));
@@ -108,8 +112,9 @@ export const facts = (opts: { accepted?: boolean; resolved?: boolean }): Obligat
   resolved: () => Promise.resolve(opts.resolved ?? false),
 });
 
-/** Build a release engine over a ledger and fact source, with a fresh in-memory log so
- *  a suite's repeated calls share one release record. The cut defaults to the 10% knob. */
+/** Build a release engine over a ledger and fact source, settling through a custodial rail
+ *  on that same ledger — so "has this pledge settled?" is read from the money the engine
+ *  moved. The cut defaults to the 10% knob. */
 export const engineOver = (
   ledger: Ledger,
   factSource: ObligationFacts,
@@ -120,9 +125,8 @@ export const engineOver = (
     facts: factSource,
     platformAccount: PLATFORM,
     cut,
-    clock,
     reason: reason('obligation-release'),
-    log: createInMemoryReleaseLog(),
+    rail: createCustodialRail(ledger),
   });
 
 export const poolTarget = (target: bigint): Condition => ({

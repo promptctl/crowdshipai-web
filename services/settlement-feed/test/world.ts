@@ -14,7 +14,7 @@ import {
   type TransactionReason,
 } from '@crowdship/ledger-kernel';
 import { createPoolFunder, openPool, poolId, type Pool } from '@crowdship/pool';
-import { timestamp, type Clock, type Timestamp } from '@crowdship/std';
+import { timestamp, type Timestamp } from '@crowdship/std';
 
 /**
  * The shared fake world the transparency tests watch: a ledger with the platform accounts,
@@ -41,10 +41,9 @@ export const BUILDER = acc('builder');
 export const PLATFORM = acc('platform-revenue');
 export const POOL_ESCROW = acc('pool-escrow-ffmpeg');
 
-/** A fixed clock — the boundary owns "now", and a deterministic instant makes the feed's
- *  timestamps assertable [LAW:no-ambient-temporal-coupling]. */
+/** A fixed instant, in the settlement domain's brand — paired with the ledger's `LEDGER_AT`
+ *  below so the feed's timestamps are assertable [LAW:no-ambient-temporal-coupling]. */
 export const AT: Timestamp = must(timestamp(1_700_000_000_000));
-export const clock: Clock = { now: () => AT };
 
 /** The same instant, in the ledger-kernel's own `Timestamp` brand — what the in-memory
  *  ledger stamps each movement's `occurredAt` with, so the feed's `at` is this exact value.

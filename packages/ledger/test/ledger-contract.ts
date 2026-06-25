@@ -292,6 +292,43 @@ export const ledgerContract = (ledgerOf: () => Ledger): void => {
       expect(await L.balanceOf(mint)).toBe(-150n);
     });
 
+    test('commitOf recovers a posted movement by key, and is empty before it posts', async () => {
+      const L = ledgerOf();
+      const { acc, key } = scope();
+      const mint = acc('mint');
+      const alice = acc('alice');
+      must(await L.openAccount(account(mint, 'mint')));
+      must(await L.openAccount(account(alice, 'user-wallet')));
+
+      const k = key('fund');
+      // Nothing is committed under the key until the movement posts.
+      expect(await L.commitOf(k)).toBeUndefined();
+
+      const receipt = mustReceipt(await L.post(move([leg(mint, alice, 500n)], k)));
+      const commit = await L.commitOf(k);
+      // The commit recovered from the key alone matches the receipt's own identity —
+      // same stable id, same recorded instant — derived from the engine, not a copy.
+      expect(commit).toEqual({ transactionId: receipt.transactionId, occurredAt: receipt.occurredAt });
+    });
+
+    test('commitOf stays empty for a key spent only on a failed attempt — a failure is no commit', async () => {
+      const L = ledgerOf();
+      const { acc, key } = scope();
+      const mint = acc('mint');
+      const alice = acc('alice');
+      const sink = acc('sink');
+      must(await L.openAccount(account(mint, 'mint')));
+      must(await L.openAccount(account(alice, 'user-wallet')));
+      must(await L.openAccount(account(sink, 'platform-revenue')));
+
+      // Alice holds nothing, so this overdrafts and fails — spending the key on a failure.
+      const k = key('overspend');
+      const failed = await L.post(move([leg(alice, sink, 50n)], k));
+      expect(failed.ok).toBe(false);
+      // No coins moved, so the key committed nothing — even though it is now spent.
+      expect(await L.commitOf(k)).toBeUndefined();
+    });
+
     test('concurrent withdrawals never overspend a funded wallet', async () => {
       const L = ledgerOf();
       const { acc, key } = scope();

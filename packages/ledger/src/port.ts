@@ -53,6 +53,24 @@ export interface Ledger {
    *  recorded movement. A total lookup — never throws for an absent account. */
   balanceOf(account: AccountId): Promise<bigint>;
 
+  /** The movement committed under an idempotency key, or `undefined` if the key has
+   *  recorded no *successful* movement (never spent, or spent only on a failed
+   *  attempt — a failure moved no coins, so it is no commit). The companion point-read
+   *  to {@link post}'s idempotency: where `post` *records* a movement under a key,
+   *  this *recovers* whether that movement happened, straight from the engine's own
+   *  record — the single source of truth that a movement under this key committed
+   *  [LAW:one-source-of-truth]. It is the durable answer to "did this settle?" that no
+   *  second store could give without drifting; deriving it from the money is the only
+   *  answer atomic with the money.
+   *
+   *  It returns the {@link MovementCommit} — the movement's stable id and the instant
+   *  it was recorded — and deliberately NOT the balances a {@link PostReceipt} carries:
+   *  a commit is identified by its key alone, but the accounts it touched are not
+   *  recoverable from the key (a networked engine stores opaque internal account ids),
+   *  so promising balances here would be a contract one engine cannot honour
+   *  [LAW:behavior-not-structure]. */
+  commitOf(key: IdempotencyKey): Promise<MovementCommit | undefined>;
+
   /** Releases the engine connection. A no-op for the in-memory fake; closes the
    *  client for a networked engine. Lifecycle is explicit, never ambient
    *  [LAW:no-ambient-temporal-coupling]. */
@@ -73,17 +91,25 @@ export interface PostRequest {
   readonly idempotencyKey: IdempotencyKey;
 }
 
-/** The proof a movement was recorded: a stable id derived from the request's key
- *  (identical across every replay of the same movement), the moment the engine
- *  recorded it, and the resulting balance of every account the movement touched.
+/** The identity of a committed movement: a stable id derived from the request's key
+ *  (identical across every replay of the same movement) and the moment the engine
+ *  recorded it. This much is recoverable from the key alone — by {@link Ledger.commitOf}
+ *  — without re-reading the accounts the movement touched. A {@link PostReceipt} is a
+ *  commit that *also* reports those balances; this is the part a key identifies on its
+ *  own. */
+export interface MovementCommit {
+  readonly transactionId: TransactionId;
+  readonly occurredAt: Timestamp;
+}
+
+/** The proof a movement was recorded: its {@link MovementCommit} plus the resulting
+ *  balance of every account the movement touched.
  *
  *  The balances are each touched account's balance *as currently recorded*. For a
  *  fresh post that is exactly the resulting balance; for a replay it is the
  *  current balance (the movement is not re-applied). Point-in-time historical
  *  balances are the concern of the `LedgerQuery` seam, not this receipt. */
-export interface PostReceipt {
-  readonly transactionId: TransactionId;
-  readonly occurredAt: Timestamp;
+export interface PostReceipt extends MovementCommit {
   readonly balances: ReadonlyMap<AccountId, bigint>;
 }
 
