@@ -33,7 +33,11 @@ import {
 } from '@crowdship/stream';
 import { describe, expect, it } from 'vitest';
 
+import { authorMenu, DEFAULT_MENU_POLICY, type Menu, type OfferDraft } from '@crowdship/menu';
+
 import { createRealCatalog } from '../src/data/real-catalog';
+import { offerParams } from '../src/data/offer-display';
+import { InMemoryMenuStore } from '../src/server/menu-store';
 
 /** Unwrap a constructor result or fail loudly — a blank/bad test input is a broken
  *  test, never a silent skip [LAW:no-silent-failure]. */
@@ -126,7 +130,7 @@ describe('createRealCatalog — the surfaced world read from real claimed channe
   it('surfaces a claimed builder in the roster, projected from the channel store', async () => {
     const channels = channelService();
     await claim(channels, 'acc-mara', 'ffmpeg_witch', 'FFmpeg Witch', 'i make video pipelines misbehave');
-    const catalog = createRealCatalog(channels, livenessOf(broker()));
+    const catalog = createRealCatalog(channels, new InMemoryMenuStore(), livenessOf(broker()));
 
     const roster = await catalog.roster();
     expect(roster).toHaveLength(1);
@@ -146,7 +150,7 @@ describe('createRealCatalog — the surfaced world read from real claimed channe
   it('resolves a claimed handle to its full channel view, and the handle resolves to the OWNER account', async () => {
     const channels = channelService();
     await claim(channels, 'acc-dex', 'rustlang_raccoon', 'Rustlang Raccoon', 'borrow checker therapy');
-    const catalog = createRealCatalog(channels, livenessOf(broker()));
+    const catalog = createRealCatalog(channels, new InMemoryMenuStore(), livenessOf(broker()));
 
     const view = await catalog.channel('rustlang_raccoon');
     expect(view).not.toBeNull();
@@ -163,14 +167,14 @@ describe('createRealCatalog — the surfaced world read from real claimed channe
 
   it('returns null for a handle that names no claimed channel', async () => {
     const channels = channelService();
-    const catalog = createRealCatalog(channels, livenessOf(broker()));
+    const catalog = createRealCatalog(channels, new InMemoryMenuStore(), livenessOf(broker()));
     expect(await catalog.channel('nobody_home')).toBeNull();
   });
 
   it('returns null for a slug that is not a well-formed handle, so fake seed slugs never resolve', async () => {
     const channels = channelService();
     await claim(channels, 'acc-mara', 'ffmpeg_witch', 'FFmpeg Witch', '');
-    const catalog = createRealCatalog(channels, livenessOf(broker()));
+    const catalog = createRealCatalog(channels, new InMemoryMenuStore(), livenessOf(broker()));
     // Hyphenated seed-style slugs are not valid handles — disjoint namespaces by construction.
     expect(await catalog.channel('ffmpeg-witch')).toBeNull();
   });
@@ -180,7 +184,7 @@ describe('createRealCatalog — the surfaced world read from real claimed channe
     await claim(channels, 'acc-mara', 'ffmpeg_witch', 'FFmpeg Witch', '');
     await claim(channels, 'acc-dex', 'rustlang_raccoon', 'Rustlang Raccoon', '');
     const b = broker();
-    const catalog = createRealCatalog(channels, livenessOf(b));
+    const catalog = createRealCatalog(channels, new InMemoryMenuStore(), livenessOf(b));
 
     // Go live for the raccoon: their room now holds an open session.
     await b.open(ch('rustlang_raccoon'), whip);
@@ -197,12 +201,47 @@ describe('createRealCatalog — the surfaced world read from real claimed channe
   it('has nothing purchasable on a claimed channel until a menu is authored', async () => {
     const channels = channelService();
     await claim(channels, 'acc-mara', 'ffmpeg_witch', 'FFmpeg Witch', '');
-    const catalog = createRealCatalog(channels, livenessOf(broker()));
+    const catalog = createRealCatalog(channels, new InMemoryMenuStore(), livenessOf(broker()));
     expect(await catalog.purchasable('ffmpeg_witch', 'o1')).toBeNull();
   });
 
   it('an empty store surfaces an empty roster, not an error', async () => {
-    const catalog = createRealCatalog(channelService(), livenessOf(broker()));
+    const catalog = createRealCatalog(channelService(), new InMemoryMenuStore(), livenessOf(broker()));
     expect(await catalog.roster()).toEqual([]);
+  });
+
+  it('surfaces a claimed builder\'s authored menu in the channel view AND charges from the same offer [41w.7]', async () => {
+    const channels = channelService();
+    await claim(channels, 'acc-mara', 'ffmpeg_witch', 'FFmpeg Witch', '');
+    const menus = new InMemoryMenuStore();
+    const catalog = createRealCatalog(channels, menus, livenessOf(broker()));
+
+    // The builder authors a menu against their channel's stable id — the same path the
+    // authoring core takes; here we drive the store directly to keep this test about the
+    // catalog read [LAW:behavior-not-structure].
+    const channel = await channels.channelByHandle(must(handle('ffmpeg_witch')));
+    const drafts: readonly OfferDraft[] = [
+      { id: 'shout', price: 50n, effect: { kind: 'shoutout', params: offerParams({ label: 'Shoutout', summary: 'name out loud' }) } },
+      { id: 'fund', price: 1000n, effect: { kind: 'bounty-pool', params: offerParams({ label: 'Fund it', summary: 'ship it' }) } },
+    ];
+    const authored = authorMenu(drafts, DEFAULT_MENU_POLICY);
+    if (!authored.ok) throw new Error(`menu did not author: ${JSON.stringify(authored.error)}`);
+    const menu: Menu = authored.value;
+    await menus.setMenu(channel!.id, menu);
+
+    // The watch view now shows the real offers, projected from the stored domain menu.
+    const view = await catalog.channel('ffmpeg_witch');
+    expect(view?.menu).toEqual([
+      { id: 'shout', label: 'Shoutout', priceCoins: 50, effect: { kind: 'shoutout', summary: 'name out loud' } },
+      { id: 'fund', label: 'Fund it', priceCoins: 1000, effect: { kind: 'bounty-pool', summary: 'ship it' } },
+    ]);
+
+    // purchasable returns the DOMAIN offer the buy pipeline charges against — the SAME
+    // price the view showed, read from one source [LAW:one-source-of-truth].
+    const offer = await catalog.purchasable('ffmpeg_witch', 'fund');
+    expect(offer?.price).toBe(1000n);
+    expect(offer?.effect.kind).toBe('bounty-pool');
+    // An offer id naming nothing on this menu resolves to null, never a fabricated offer.
+    expect(await catalog.purchasable('ffmpeg_witch', 'no-such')).toBeNull();
   });
 });

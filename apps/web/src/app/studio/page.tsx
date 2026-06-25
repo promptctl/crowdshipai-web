@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 
 import { ClaimChannelForm } from '@/components/ClaimChannelForm';
 import { GoLiveControl } from '@/components/GoLiveControl';
+import { MenuAuthoringForm } from '@/components/MenuAuthoringForm';
+import { getCatalog } from '@/data/catalog';
 import { getChannelService } from '@/server/channels';
 import { currentPrincipal } from '@/server/principal';
 
@@ -24,6 +26,10 @@ export default async function StudioPage() {
   if (principal === null) redirect('/login');
 
   const channel = await getChannelService().channelByOwner(principal.id);
+  // A builder with a channel sees their current menu, prefilled for editing — read through
+  // the same catalog seam a viewer reads, so the studio edits exactly what the audience
+  // sees [LAW:one-source-of-truth]. A builder with no channel has no menu to read.
+  const currentMenu = channel === undefined ? [] : ((await getCatalog().channel(channel.handle))?.menu ?? []);
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
@@ -48,6 +54,14 @@ export default async function StudioPage() {
           <div className="mt-8">
             <GoLiveControl slug={channel.handle} />
           </div>
+          <section className="mt-12">
+            <h2 className="text-lg font-bold tracking-tight text-chalk">your menu</h2>
+            <p className="mt-1 mb-5 max-w-xl text-sm text-fog">
+              Wire up what your audience can buy — name it, price it, and give it an effect your
+              overlay reacts to. It’s yours: sell whatever you want.
+            </p>
+            <MenuAuthoringForm initialOffers={currentMenu} />
+          </section>
         </>
       )}
       <div className="mt-10">
