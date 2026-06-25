@@ -55,15 +55,19 @@ const CAPTURE_CANCELLED = 'Screen capture was cancelled — pick a window or scr
 const CONNECT_FAILED = 'Could not connect to the stream. Try going live again.';
 
 /**
- * Capture the builder's webcam as an optional face track. No camera, or a denied
- * permission, is honest absence — `null`, not a thrown failure — so the screen still goes
- * live without it [LAW:no-silent-failure]. The track carries `Source.Camera`, which is the
+ * Capture the builder's webcam as an optional face track. No camera, a denied permission,
+ * or any other capture failure is honest absence — `null`, not a thrown failure — so the
+ * screen still goes live regardless of the camera's state [LAW:no-silent-failure]: going
+ * live is never blocked on the optional track. The error is logged, not swallowed, so a
+ * genuine fault (a NotReadableError, an in-use device) leaves a diagnostic trail rather
+ * than vanishing behind a silent fallback. The track carries `Source.Camera`, the
  * discriminator the viewer routes the face onto its overlay by [LAW:types-are-the-program].
  */
 const captureFace = async (): Promise<LocalVideoTrack | null> => {
   try {
     return await createLocalVideoTrack();
-  } catch {
+  } catch (error) {
+    console.warn('Webcam capture unavailable; going live screen-only.', error);
     return null;
   }
 };
