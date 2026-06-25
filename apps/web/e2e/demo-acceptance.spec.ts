@@ -140,19 +140,11 @@ test('the full live demo loop: a real builder streams real video, watched live, 
     // (3) Liveness is derived from the real room: the LIVE badge lights for the viewer. The
     // badge text is the uppercase token "LIVE" run together with the viewer count ("LIVE1"), so
     // match the case-sensitive substring — the lowercase "live" used elsewhere never collides.
-    // The badge is server-computed at page load, so allow a reload in case the viewer's first
-    // render raced just ahead of the room being observable [LAW:no-ambient-temporal-coupling].
-    const liveBadge = () => viewer.getByText(/LIVE/).first();
-    await expect
-      .poll(
-        async () => {
-          if (await liveBadge().isVisible().catch(() => false)) return true;
-          await viewer.reload().catch(() => undefined);
-          return liveBadge().isVisible().catch(() => false);
-        },
-        { timeout: 30_000 },
-      )
-      .toBe(true);
+    // The badge is server-rendered at page load; the viewer loaded /watch only after go-live
+    // completed and the assertLiveVideo above confirmed the subscription is live, so the room is
+    // open at that render and the badge is in the initial HTML — a direct assertion, no retry
+    // that would swallow a real page error [LAW:no-silent-failure].
+    await expect(viewer.getByText(/LIVE/).first()).toBeVisible({ timeout: 20_000 });
 
     // (4) The live loop rides the stream: the viewer funds a wallet and fires the offer; coins
     // move on the ledger and the effect pops on-screen for everyone watching.
