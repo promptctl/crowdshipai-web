@@ -80,7 +80,6 @@ interface SeedBuilder {
   readonly title: string;
   readonly tags: readonly string[];
   readonly viewerCount: number;
-  readonly isLive: boolean;
   readonly accentHue: number;
   readonly bio: string;
   readonly maturity: MaturityRating;
@@ -95,7 +94,6 @@ const SEED: readonly SeedBuilder[] = [
     title: 'adding a real-time vignette filter to ffmpeg, live',
     tags: ['ffmpeg', 'C', 'video', 'open-source'],
     viewerCount: 1243,
-    isLive: true,
     accentHue: 28,
     bio: 'systems gremlin. i make video pipelines do things they should not. building in public so you can heckle.',
     maturity: GENERAL_AUDIENCE,
@@ -118,7 +116,6 @@ const SEED: readonly SeedBuilder[] = [
     title: 'writing a toy borrow-checker from scratch — type theory hour',
     tags: ['rust', 'compilers', 'type-theory'],
     viewerCount: 612,
-    isLive: true,
     accentHue: 200,
     bio: 'compiler nerd. today we make the borrow checker that haunts your dreams. gentle, i promise.',
     maturity: GENERAL_AUDIENCE,
@@ -138,7 +135,6 @@ const SEED: readonly SeedBuilder[] = [
     title: 'building a roguelike in 48h — procedural dungeon day',
     tags: ['gamedev', 'godot', 'roguelike'],
     viewerCount: 2890,
-    isLive: true,
     accentHue: 320,
     bio: 'i make small weird games fast. mature content sometimes — age-gated, behave.',
     // The one mature builder in the seed — the age gate has something real to act on.
@@ -159,7 +155,6 @@ const SEED: readonly SeedBuilder[] = [
     title: 'live-debugging a gnarly prod incident (sanitized) — observability',
     tags: ['sre', 'observability', 'postmortem'],
     viewerCount: 487,
-    isLive: true,
     accentHue: 140,
     bio: 'i fix things on fire calmly. the resume is the stream. recruiters welcome.',
     maturity: GENERAL_AUDIENCE,
@@ -175,7 +170,6 @@ const SEED: readonly SeedBuilder[] = [
     title: 'static-site generator in Zig — currently away, back at 8pm',
     tags: ['zig', 'tooling', 'static-site'],
     viewerCount: 0,
-    isLive: false,
     accentHue: 50,
     bio: 'minimal tools, sharp edges. back tonight.',
     maturity: GENERAL_AUDIENCE,
@@ -186,13 +180,16 @@ const SEED: readonly SeedBuilder[] = [
   },
 ];
 
-const toSummary = (b: SeedBuilder): StreamSummary => ({
+// Liveness is NOT the seed's to assert — it is the stream provider's truth, passed in
+// as derived state and projected onto the summary here [LAW:one-source-of-truth]. The
+// seed owns only the static facts (identity, title, tags, menu).
+const toSummary = (b: SeedBuilder, isLive: boolean): StreamSummary => ({
   slug: b.slug,
   builderName: b.builderName,
   title: b.title,
   tags: b.tags,
   viewerCount: b.viewerCount,
-  isLive: b.isLive,
+  isLive,
   accentHue: b.accentHue,
   maturity: b.maturity,
 });
@@ -206,26 +203,33 @@ const menuBySlug = new Map(SEED.map((b) => [b.slug, domainMenu(b.menu)]));
 /**
  * Construct the in-memory catalog. Returns the CrowdCatalog interface, never the
  * concrete type — callers depend on the seam, not the fake.
+ *
+ * `isChannelLive` is the liveness authority injected at the composition root: the fake
+ * holds the static roster but asks this resolver whether each builder is broadcasting,
+ * so the catalog never carries a hand-set flag that could disagree with the room
+ * [LAW:one-source-of-truth]. The fake stays source-agnostic — it depends on a function,
+ * not on the broker — which is what lets a test back it with a stub or an in-memory
+ * broker [LAW:composability][LAW:effects-at-boundaries].
  */
-export const createFakeCatalog = (): CrowdCatalog => ({
-  roster: () =>
-    // Every builder, live first then by audience — a sort, not a filter: offline
-    // builders stay in the roster (their channel is still a resume).
-    Promise.resolve(
-      [...SEED]
-        .sort((a, b) => Number(b.isLive) - Number(a.isLive) || b.viewerCount - a.viewerCount)
-        .map(toSummary),
-    ),
+export const createFakeCatalog = (
+  isChannelLive: (slug: ChannelSlug) => Promise<boolean>,
+): CrowdCatalog => ({
+  roster: async () => {
+    // Every builder, live first then by audience — a sort over DERIVED liveness, not a
+    // filter: offline builders stay in the roster (their channel is still a resume).
+    const summaries = await Promise.all(SEED.map(async (b) => toSummary(b, await isChannelLive(b.slug))));
+    return summaries.sort((a, b) => Number(b.isLive) - Number(a.isLive) || b.viewerCount - a.viewerCount);
+  },
 
-  channel: (slug) => {
+  channel: async (slug) => {
     const b = bySlug.get(slug);
-    if (b === undefined) return Promise.resolve(null);
-    return Promise.resolve({
-      stream: toSummary(b),
+    if (b === undefined) return null;
+    return {
+      stream: toSummary(b, await isChannelLive(slug)),
       bio: b.bio,
       menu: b.menu,
       chat: b.chat,
-    });
+    };
   },
 
   purchasable: (slug, rawOfferId) => {
