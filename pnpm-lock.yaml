@@ -47,6 +47,9 @@ importers:
       '@crowdship/moderation-node':
         specifier: workspace:*
         version: link:../../packages/moderation-node
+      '@crowdship/node-std':
+        specifier: workspace:*
+        version: link:../../packages/node-std
       '@crowdship/on-ramp':
         specifier: workspace:*
         version: link:../../services/on-ramp

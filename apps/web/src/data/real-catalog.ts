@@ -1,8 +1,11 @@
 import { GENERAL_AUDIENCE } from '@crowdship/moderation';
 import { handle, type Channel, type Handle } from '@crowdship/identity';
+import { findOffer, offerId } from '@crowdship/menu';
 
+import type { MenuReader } from './menu-reader';
+import { toMenuView } from './menu-view';
 import { liveFirst } from './roster-order';
-import type { ChannelSlug, ChannelView, CrowdCatalog, StreamSummary } from './types';
+import type { ChannelSlug, ChannelView, CrowdCatalog, PricedOffer, StreamSummary } from './types';
 
 /**
  * The slice of the channel directory the catalog reads — exactly the two reads
@@ -52,14 +55,14 @@ const toSummary = (channel: Channel, isLive: boolean): StreamSummary => ({
   maturity: GENERAL_AUDIENCE,
 });
 
-const toView = (channel: Channel, isLive: boolean): ChannelView => ({
+const toView = (channel: Channel, isLive: boolean, menu: readonly PricedOffer[]): ChannelView => ({
   stream: toSummary(channel, isLive),
   bio: channel.profile.bio,
-  // A freshly-claimed channel has authored no menu yet — an empty menu, not a missing
-  // one [LAW:dataflow-not-control-flow]. The menu-authoring path is downstream (menu
-  // epic); until it lands there is nothing purchasable here, which `purchasable` reports
-  // honestly rather than fabricating an offer.
-  menu: [],
+  // The builder's authored menu, projected from their stored domain menu — or an empty
+  // menu when they have authored none yet, an honest empty value, never a missing one
+  // [LAW:dataflow-not-control-flow]. The same stored menu drives `purchasable`, so what
+  // a backer sees and what the ledger charges read from one source [LAW:one-source-of-truth].
+  menu,
   // Chat is live, carried over the watch surface's event stream, not seeded history.
   chat: [],
 });
@@ -73,12 +76,15 @@ const toView = (channel: Channel, isLive: boolean): ChannelView => ({
  * point in `catalog.ts`, behind the same read seam the fake implements, so not one page
  * changes [LAW:single-enforcer][LAW:locality-or-seam].
  *
- * `purchasable` always resolves to null today: the menu-authoring path that gives a
- * claimed channel offers is a downstream ticket, and an absent menu is an honest "nothing
- * to buy here", never a fabricated offer [LAW:no-silent-failure].
+ * `purchasable` reads the builder's authored menu from the {@link MenuReader} and
+ * resolves the chosen offer against it — the SAME domain menu the channel view projects
+ * for display, so display and charge agree [LAW:one-source-of-truth]. A channel whose
+ * builder has authored no menu has nothing to buy: an honest null, never a fabricated
+ * offer [LAW:no-silent-failure].
  */
 export const createRealCatalog = (
   channels: ChannelDirectory,
+  menus: MenuReader,
   isChannelLive: (slug: ChannelSlug) => Promise<boolean>,
 ): CrowdCatalog => ({
   roster: async () => {
@@ -97,8 +103,26 @@ export const createRealCatalog = (
     if (!h.ok) return null;
     const channel = await channels.channelByHandle(h.value);
     if (channel === undefined) return null;
-    return toView(channel, await isChannelLive(slug));
+    // The menu follows the stable channel id, not the handle. An absent menu projects to
+    // an empty one, never a special-cased branch [LAW:dataflow-not-control-flow].
+    const menu = await menus.menuOf(channel.id);
+    const view = menu === undefined ? [] : toMenuView(menu);
+    return toView(channel, await isChannelLive(slug), view);
   },
 
-  purchasable: () => Promise.resolve(null),
+  purchasable: async (slug, rawOfferId) => {
+    const h = handle(slug);
+    if (!h.ok) return null;
+    const channel = await channels.channelByHandle(h.value);
+    if (channel === undefined) return null;
+    const menu = await menus.menuOf(channel.id);
+    if (menu === undefined) return null;
+    // A blank/malformed offer id from an untrusted request resolves to "no such offer",
+    // never a thrown guard [LAW:no-defensive-null-guards]; a valid id resolves to the one
+    // offer it names or nothing — findOffer's unique-by-construction contract. The domain
+    // offer returned is exactly what the purchase pipeline charges against.
+    const id = offerId(rawOfferId);
+    if (!id.ok) return null;
+    return findOffer(menu, id.value) ?? null;
+  },
 });

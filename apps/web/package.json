@@ -18,6 +18,7 @@
     "@crowdship/menu": "workspace:*",
     "@crowdship/moderation": "workspace:*",
     "@crowdship/moderation-node": "workspace:*",
+    "@crowdship/node-std": "workspace:*",
     "@crowdship/on-ramp": "workspace:*",
     "@crowdship/payments": "workspace:*",
     "@crowdship/presence": "workspace:*",
