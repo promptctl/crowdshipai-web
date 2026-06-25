@@ -259,11 +259,16 @@ means a missing type. Go close the gap.
 
 ## Status
 
-Founding stage, building toward a shipped POC. There is a walking-skeleton web app
-(`apps/web`) — the visible experience, driven by an in-memory fake behind a single
-catalog seam — and a coin ledger that runs on **TigerBeetle** behind a `Ledger`
-seam (the engine owns balances, idempotency, and the no-overdraft rule; an
-in-memory fake stands in behind the same seam for fast tests). This document is the
+Founding stage, building toward a shipped POC. The web app (`apps/web`) is the
+visible experience: its catalog seam is wired to the **real** identity, menu, and
+stream services, and a person can today sign up, author a menu, buy coins (real
+on-ramp → real ledger), and spend coins on a menu offer that fires an effect into
+live chat. The coin ledger runs on **TigerBeetle** behind a `Ledger` seam (the
+engine owns balances, idempotency, and the no-overdraft rule; an in-memory fake
+stands in behind the same seam for fast tests). **Known gap:** the self-settling
+obligation loop — `pool` / `release` / `refund` / `settlement-feed` — is fully
+built and tested but **not yet surfaced in the UI or any API**; it is the core
+pillar still behind the curtain, and wiring it to a person is the live priority. This document is the
 source of truth for *intent*; build toward it, and update it when intent changes —
 never let it drift from what we're actually building.
 
