@@ -2,6 +2,7 @@ import type {
   Account,
   AccountId,
   AccountKind,
+  IdempotencyKey,
   Result,
   Timestamp,
   TransactionReason,
@@ -11,7 +12,14 @@ import { err, mayGoNegative, ok, timestamp } from '@crowdship/ledger-kernel';
 import { show } from '@crowdship/std';
 
 import { touchedAccounts, transactionIdOf } from './movement.js';
-import type { AccountConflict, Ledger, PostError, PostReceipt, PostRequest } from './port.js';
+import type {
+  AccountConflict,
+  Ledger,
+  MovementCommit,
+  PostError,
+  PostReceipt,
+  PostRequest,
+} from './port.js';
 import type { AccountMovement, LedgerQuery } from './query.js';
 
 /** Supplies the moment a movement is recorded. The boundary owns time; the fake
@@ -149,6 +157,17 @@ export class InMemoryLedger implements Ledger, LedgerQuery {
 
   balanceOf(account: AccountId): Promise<bigint> {
     return Promise.resolve(this.#balances.get(account) ?? 0n);
+  }
+
+  // The commit recovered from the one record the write side already keeps for
+  // idempotency — the movement stored under the key — so "did this movement happen?"
+  // has the same single source of truth as the post that recorded it
+  // [LAW:one-source-of-truth]. A key spent only on a failed attempt holds no success
+  // and so committed nothing.
+  commitOf(key: IdempotencyKey): Promise<MovementCommit | undefined> {
+    const recorded = this.#movements.get(key);
+    if (recorded === undefined || recorded.kind !== 'success') return Promise.resolve(undefined);
+    return Promise.resolve({ transactionId: transactionIdOf(key), occurredAt: recorded.occurredAt });
   }
 
   // The query side derives every answer by folding the same recorded movements the

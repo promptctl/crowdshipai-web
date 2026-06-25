@@ -3,6 +3,7 @@ import {
   accountId,
   coinAmount,
   idempotencyKey,
+  timestamp as ledgerTimestamp,
   transactionReason,
   transfer,
   type Account,
@@ -11,8 +12,9 @@ import {
   type IdempotencyKey,
   type Result,
   type TransactionReason,
+  type Timestamp as LedgerTimestamp,
 } from '@crowdship/ledger-kernel';
-import { timestamp, type Clock, type Timestamp } from '@crowdship/std';
+import { timestamp, type Timestamp } from '@crowdship/std';
 
 import { openPool, poolId, type Pool } from '../src/index.js';
 
@@ -41,10 +43,12 @@ export const BUILDER = acc('builder');
 export const PLATFORM = acc('platform-revenue');
 export const POOL_ESCROW = acc('pool-escrow-ffmpeg');
 
-/** A fixed clock — the boundary owns "now", and a deterministic instant makes the released
- *  pledge's timestamps assertable [LAW:no-ambient-temporal-coupling]. */
+/** A fixed instant, in both the settlement domain's brand (the pledge's `escrowedAt`) and
+ *  the ledger's (every recorded movement's `occurredAt`). They are the same epoch millis;
+ *  a release happens when the rail's movement is recorded, so the released pledge's
+ *  `releasedAt` is exactly this [LAW:no-ambient-temporal-coupling]. */
 export const AT: Timestamp = must(timestamp(1_700_000_000_000));
-export const clock: Clock = { now: () => AT };
+const LEDGER_AT: LedgerTimestamp = must(ledgerTimestamp(1_700_000_000_000));
 
 /** The ffmpeg-feature pool the founding doc describes — many backers, one target, one builder. */
 export const ffmpegPool = (target: bigint): Pool => ({
@@ -71,7 +75,7 @@ export interface FundedWorld {
  * starts empty — backers fill it by contributing.
  */
 export const fundedWorld = async (backers: readonly Backer[], pool: Pool): Promise<FundedWorld> => {
-  const ledger = createInMemoryLedger();
+  const ledger = createInMemoryLedger(() => LEDGER_AT);
   must(await ledger.openAccount(account(MINT, 'mint')));
   must(await ledger.openAccount(account(BUILDER, 'user-wallet')));
   must(await ledger.openAccount(account(PLATFORM, 'platform-revenue')));

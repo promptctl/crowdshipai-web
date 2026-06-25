@@ -1,25 +1,25 @@
 import type { Ledger, PostError, PostReceipt } from '@crowdship/ledger';
 import type {
   AccountId,
-  IdempotencyKey,
+  Timestamp as LedgerTimestamp,
+  TransactionId,
   TransactionReason,
   TransferError,
 } from '@crowdship/ledger-kernel';
-import { idempotencyKey, transfer } from '@crowdship/ledger-kernel';
+import { transfer } from '@crowdship/ledger-kernel';
 import type {
   Condition,
   DeliverableId,
   Escrowed,
   GoalId,
   Observation,
-  PledgeId,
   Released,
 } from '@crowdship/settlement';
 import { isMet, meetCondition, observeDeliverable, observeGoal, observePool, release } from '@crowdship/settlement';
-import type { Clock, CoinAmount } from '@crowdship/std';
-import { coinAmount } from '@crowdship/std';
+import type { CoinAmount, Timestamp } from '@crowdship/std';
+import { coinAmount, timestamp } from '@crowdship/std';
 
-import type { ReleaseLog } from './release-log.js';
+import type { SettlementRail } from './rail.js';
 
 /**
  * The concrete obligation terms the release engine requires a pledge to carry. The
@@ -89,10 +89,12 @@ export interface ObligationFacts {
  *  - `released` — the condition was met on THIS call, coins moved (escrow → builder +
  *    escrow → platform), and the pledge advanced to its terminal `released` phase, all as
  *    one unit. Carries the settled pledge and the ledger receipt proving the money moved.
- *  - `already-released` — this pledge had already released on a prior call; the recorded
- *    result is replayed unchanged (no second observation, no second movement). The same
- *    shape as `released`, kept a distinct arm so a caller that acts on a release — the
- *    stream's event feed — fires once and not again on a faithful retry.
+ *  - `already-released` — this pledge had already settled on a prior call; the verdict is
+ *    replayed from the rail's record of the settling movement (no second observation, no
+ *    second movement). It carries the reconstructed terminal pledge and the `transactionId`
+ *    of that movement as the proof of settlement — not the resulting balances, which the
+ *    rail does not recover for a past settlement. A distinct arm so a caller that acts on a
+ *    release — the stream's event feed — fires once and not again on a faithful retry.
  *  - `pending` — the condition was observed and is not yet met. No coins moved, the
  *    pledge is unchanged; the caller polls again later. Carries the `observation` so
  *    the caller (and the stream) can see WHY — e.g. a pool at 300 of 500.
@@ -101,7 +103,7 @@ export interface ObligationFacts {
  *    obligation over an empty escrow is a funding error the caller must see, not a no-op to
  *    swallow [LAW:no-silent-failure]. (A pool can never reach this — being met means its
  *    balance cleared a positive target — so it is the deliverable/goal funding gap.)
- *  - `release-refused` — the ledger refused the coin movement (an account was never opened,
+ *  - `release-refused` — the rail refused the coin movement (an account was never opened,
  *    the key was reused for a different movement). No coins moved; the pledge did not
  *    advance. The loud reconciliation case [LAW:no-silent-failure].
  *  - `invalid-routing` — escrow and a payee are the same account, so no movement can even
@@ -109,7 +111,7 @@ export interface ObligationFacts {
  */
 export type ReleaseOutcome<Terms> =
   | { readonly kind: 'released'; readonly pledge: Released<Terms>; readonly receipt: PostReceipt }
-  | { readonly kind: 'already-released'; readonly pledge: Released<Terms>; readonly receipt: PostReceipt }
+  | { readonly kind: 'already-released'; readonly pledge: Released<Terms>; readonly transactionId: TransactionId }
   | { readonly kind: 'pending'; readonly observation: Observation }
   | { readonly kind: 'nothing-to-settle'; readonly escrowAccount: AccountId }
   | { readonly kind: 'release-refused'; readonly error: PostError }
@@ -129,8 +131,9 @@ export interface ReleaseEngine {
 /** The dependencies the engine composes. Grouped into one record so the wiring is read
  *  at a glance and a new dependency is an additive field, not a shifted positional arg. */
 export interface ReleaseEngineDeps {
-  /** The single boundary every coin movement passes through — owner of balances, the
-   *  no-overdraft rule, and charge idempotency [LAW:single-enforcer]. */
+  /** The balance source the engine OBSERVES — the coins held in escrow it judges a pool
+   *  condition against [LAW:single-enforcer]. The engine reads through this seam and
+   *  *settles* through the rail; it never posts the release movement directly. */
   readonly ledger: Ledger;
   /** The source of the non-coin facts a deliverable or goal condition is judged by. */
   readonly facts: ObligationFacts;
@@ -139,24 +142,26 @@ export interface ReleaseEngineDeps {
   readonly platformAccount: AccountId;
   /** How the gross splits into the builder's share and the platform's cut. */
   readonly cut: CutPolicy;
-  /** The boundary's clock — the engine owns "now", never reaches for it ambiently
-   *  [LAW:no-ambient-temporal-coupling]. */
-  readonly clock: Clock;
-  /** The audit reason stamped on every release movement in the ledger's history. */
+  /** The audit reason stamped on every release movement the rail commits. */
   readonly reason: TransactionReason;
-  /** The authority for "has this pledge already released?" — consulted before observing,
-   *  so a released pool replays its verdict instead of re-reading its drained balance. */
-  readonly log: ReleaseLog;
+  /** The seam every release settles through: move the coins and commit that it settled,
+   *  as one atomic unit, and answer whether a pledge has already settled. Custodial now,
+   *  on-chain later — a different instance, never a change here [LAW:locality-or-seam].
+   *  The engine has no clock: a release happens at the instant the rail's movement is
+   *  recorded, so the release instant is the money's own [LAW:one-source-of-truth]. */
+  readonly rail: SettlementRail;
 }
 
-/** The idempotency key for a pledge's release, derived from its id so a retry posts the
- *  IDENTICAL movement and the ledger replays it (no double-spend) rather than recording
- *  a second one. A pledge id is non-blank, so the prefixed key is never blank; a failure
- *  here would be corruption, not a routine outcome, so it halts loudly [LAW:no-silent-failure]. */
-const releaseKey = (id: PledgeId): IdempotencyKey => {
-  const key = idempotencyKey(`release:${id}`);
-  if (!key.ok) throw new Error(`release idempotency key could not be formed from pledge ${id}`);
-  return key.value;
+/** The money's recorded instant, re-branded into the settlement domain's `Timestamp`. The
+ *  ledger and the pledge state machine each brand epoch-millis in their own package, and the
+ *  two brands are nominally distinct, so the one instant that crosses between them — a release
+ *  happens when the rail's movement is recorded — is re-branded here. A recorded instant is a
+ *  valid epoch millis, so a failure is corruption, halted loudly rather than swallowed
+ *  [LAW:no-silent-failure]. */
+const asInstant = (occurredAt: LedgerTimestamp): Timestamp => {
+  const at = timestamp(occurredAt);
+  if (!at.ok) throw new Error(`ledger recorded an invalid occurred-at instant: ${occurredAt}`);
+  return at.value;
 };
 
 /** The single enforcer of value conservation across the cut: the builder's share plus
@@ -175,13 +180,14 @@ const conserve = (split: Split, gross: CoinAmount): void => {
 
 /**
  * Serializes a pledge's release critical section per id while letting distinct pledges run
- * fully concurrently, so two retries of the SAME pledge cannot both read "not yet released"
+ * fully concurrently, so two retries of the SAME pledge cannot both read "not yet settled"
  * and both report a fresh `released` [LAW:no-ambient-temporal-coupling]. The coins are safe
- * either way (the ledger's idempotency key), but the caller-visible `released` vs
- * `already-released` signal is not — this owns that ordering rather than leaving it to
+ * either way (the rail settles at most once per pledge), but the caller-visible `released`
+ * vs `already-released` signal is not — this owns that ordering rather than leaving it to
  * incidental interleaving. Entries delete themselves once drained, so the map cannot grow
- * without bound. (This closes the in-process race; a cross-process race is closed by a
- * durable log with an atomic claim behind the same seam — purchase's identical machinery.)
+ * without bound. (This closes the in-process race for the signal; the money-correctness
+ * window — a crash between moving the coins and recording it — is closed by the rail, which
+ * reads "settled?" from the money itself across processes.)
  */
 class KeyedSerializer {
   readonly #tails = new Map<string, Promise<unknown>>();
@@ -203,41 +209,41 @@ class KeyedSerializer {
 
 /**
  * Build the release engine from the seams it composes. The engine is the BOUNDARY that
- * touches the world: it reads the ledger and the fact source to observe, and posts the
- * release movement back through the ledger [LAW:effects-at-boundaries]. The judgment of
- * whether a condition is met is the pure `isMet` from the settlement core; this service
- * only gathers the facts and performs the consequence.
+ * touches the world: it reads the ledger and the fact source to observe, and settles the
+ * release through the rail [LAW:effects-at-boundaries]. The judgment of whether a condition
+ * is met is the pure `isMet` from the settlement core; this service only gathers the facts
+ * and performs the consequence.
  *
  * The sequence is the whole basis of "settles itself, atomically and idempotently". Each
  * pledge's attempt runs in a per-id critical section [LAW:no-ambient-temporal-coupling]:
  *
- *  1. Consult the log FIRST. If this pledge already released, replay the recorded result —
- *     never observe again. This is load-bearing for a pool-target condition, whose release
- *     drains the very balance it observes: re-reading a released pool would see it below
- *     target and wrongly report `pending` [LAW:no-silent-failure].
+ *  1. Ask the rail FIRST whether this pledge has settled. If it has, replay the verdict
+ *     from the recorded movement — never observe again. This is load-bearing for a
+ *     pool-target condition, whose release drains the very balance it observes: re-reading
+ *     a settled pool would see it below target and wrongly report `pending`. Because the
+ *     rail derives "settled?" from the money itself, this heals across a crash and across
+ *     processes — a pool that settled then lost its in-process memory still replays
+ *     correctly [LAW:no-silent-failure].
  *  2. Otherwise observe the condition against the coins held in escrow; if not met, return
  *     `pending` and touch nothing.
- *  3. If met, release exactly the escrow balance — the ledger is the one truth of what is
+ *  3. If met, settle exactly the escrow balance — the ledger is the one truth of what is
  *     held [LAW:one-source-of-truth] — splitting it into the builder's share and the
- *     platform's cut. Post the coins FIRST (money is the thing that must never be wrong),
- *     then advance the pledge (pure, infallible) and record the release.
+ *     platform's cut. The rail moves the coins and commits the settlement as one unit; the
+ *     release then advances the pledge (pure, infallible) to its terminal phase at the
+ *     instant the money moved.
  *
- * The post carries a key derived from the pledge id, so the ledger moves the coins at most
- * once no matter how often this runs. But "coins move once" is not the whole contract: the
+ * The settlement is keyed by the pledge id, so the rail moves the coins at most once no
+ * matter how often this runs. But "coins move once" is not the whole contract: the
  * `released` vs `already-released` distinction is the signal a caller acts on (the stream's
- * event feed must fire once), and that distinction is NOT idempotent under a bare retry —
- * two racers could both miss the log and both report `released`. So, exactly as purchase
- * does for its non-idempotent effect, the attempt is serialized per pledge id, and the
- * second racer observes the log already written and replays `already-released`. A refused
- * post is surfaced, never swallowed, and the pledge never advances without a receipt
- * proving the coins moved [LAW:no-silent-failure]. The one residual window — the process
- * dying after the post but before the record — is the atomic two-phase settlement rail's
- * concern (its own ticket), not silently handled here: a deliverable/goal pledge self-heals
- * on retry (its observable is stable), and a pool pledge in that window is the exact case
- * the durable, atomic log behind this seam closes.
+ * event feed must fire once), and that distinction is not idempotent under a bare in-process
+ * retry — two racers could both miss the settled-check and both report `released`. So the
+ * attempt is serialized per pledge id, and the second racer observes the settlement already
+ * committed and replays `already-released`. A refused settlement is surfaced, never
+ * swallowed, and the pledge never advances without a receipt proving the coins moved
+ * [LAW:no-silent-failure].
  */
 export const createReleaseEngine = (deps: ReleaseEngineDeps): ReleaseEngine => {
-  const { ledger, facts, platformAccount, cut, clock, reason, log } = deps;
+  const { ledger, facts, platformAccount, cut, reason, rail } = deps;
   const serializer = new KeyedSerializer();
 
   // Pair the condition with its one live reading into the single Observation value `isMet`
@@ -261,11 +267,13 @@ export const createReleaseEngine = (deps: ReleaseEngineDeps): ReleaseEngine => {
     pledge: Escrowed<Terms>,
   ): Promise<ReleaseOutcome<Terms>> => {
     // Reconstruct the terminal pledge deterministically from the (unchanged) escrowed
-    // pledge and the recorded instant — the same value the original release produced.
-    const prior = await log.released(pledge.id);
+    // pledge and the instant the settling movement was recorded — the same value the
+    // original release produced.
+    const prior = await rail.settlementOf(pledge.id);
     if (prior) {
-      const replayed = release(meetCondition(pledge, prior.at), prior.at);
-      return { kind: 'already-released', pledge: replayed, receipt: prior.receipt };
+      const at = asInstant(prior.occurredAt);
+      const replayed = release(meetCondition(pledge, at), at);
+      return { kind: 'already-released', pledge: replayed, transactionId: prior.transactionId };
     }
 
     const { escrowAccount, builderAccount, condition } = pledge.terms;
@@ -291,20 +299,19 @@ export const createReleaseEngine = (deps: ReleaseEngineDeps): ReleaseEngine => {
     const toPlatform = transfer(escrowAccount, platformAccount, split.platformCut);
     if (!toPlatform.ok) return { kind: 'invalid-routing', error: toPlatform.error };
 
-    const posted = await ledger.post({
+    const settled = await rail.settle({
+      pledge: pledge.id,
       transfers: [toBuilder.value, toPlatform.value],
       reason,
-      idempotencyKey: releaseKey(pledge.id),
     });
-    if (!posted.ok) return { kind: 'release-refused', error: posted.error };
+    if (!settled.ok) return { kind: 'release-refused', error: settled.error };
 
-    // Coins have moved. Advance the pledge through its phases to terminal `released` — pure
-    // transitions, so this cannot fail after the money moved — and record the release so a
-    // later call replays this exact verdict rather than re-observing.
-    const at = clock.now();
+    // Coins have moved and the settlement is committed. Advance the pledge through its
+    // phases to terminal `released` — pure transitions, so this cannot fail after the money
+    // moved — at the instant the money moved, which the receipt carries [LAW:one-source-of-truth].
+    const at = asInstant(settled.value.occurredAt);
     const released = release(meetCondition(pledge, at), at);
-    await log.record(pledge.id, { receipt: posted.value, at });
-    return { kind: 'released', pledge: released, receipt: posted.value };
+    return { kind: 'released', pledge: released, receipt: settled.value };
   };
 
   return {
