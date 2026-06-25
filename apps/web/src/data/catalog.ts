@@ -1,21 +1,23 @@
+import { getChannelService } from '../server/channels';
 import { isChannelLive } from '../server/stream';
-import { createFakeCatalog } from './fake-catalog';
+import { createRealCatalog } from './real-catalog';
 import type { CrowdCatalog } from './types';
 
 /**
  * The single place the app decides which CrowdCatalog it runs against
- * [LAW:one-source-of-truth]. Every page reads through `getCatalog()`, so
- * swapping the in-memory fake for real services is a one-line change here and
- * nowhere else [LAW:single-enforcer].
+ * [LAW:one-source-of-truth]. Every page reads through `getCatalog()`, so the choice
+ * of source is a change here and nowhere else [LAW:single-enforcer].
  *
- * The catalog's static seed knows a builder's identity, title, and menu, but NOT
- * whether they are live — liveness is the stream provider's truth, not the
- * catalog's. So this composition root injects {@link isChannelLive} (backed by the
- * LiveKit room, the single authority) and the fake assembles each {@link StreamSummary}'s
- * `isLive` from it, never from a hand-set flag that could disagree with reality
- * [LAW:one-source-of-truth]. A real catalog backed by real services swaps in here the
- * same way, and not one page changes [LAW:locality-or-seam].
+ * Production runs against the REAL catalog: it surfaces real claimed channels read
+ * from the identity {@link ChannelService} (the single source of truth for which
+ * channels exist), composing each builder's liveness from the stream provider — the
+ * LiveKit room is the single authority for "is this builder broadcasting", injected
+ * here as {@link isChannelLive} so the catalog never carries a flag that could drift
+ * from reality [LAW:one-source-of-truth]. A claimed builder's handle therefore resolves
+ * through `getCatalog().channel(handle)` so a viewer reaches `/watch/<handle>`, and
+ * claimed builders populate the browse grid and the recruiter lens. The in-memory fake
+ * (`createFakeCatalog`) stays as the test catalog behind the same seam [LAW:locality-or-seam].
  */
-const catalog: CrowdCatalog = createFakeCatalog(isChannelLive);
+const catalog: CrowdCatalog = createRealCatalog(getChannelService(), isChannelLive);
 
 export const getCatalog = (): CrowdCatalog => catalog;

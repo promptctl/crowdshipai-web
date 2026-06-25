@@ -32,6 +32,14 @@ export interface ChannelStore {
   channelById(id: ChannelId): Promise<Channel | undefined>;
   channelByHandle(handle: Handle): Promise<Channel | undefined>;
   channelByOwner(ownerId: AccountId): Promise<Channel | undefined>;
+  /**
+   * Every channel in the registry — the roster read discovery surfaces builders
+   * through. A read of the same authoritative record the by-id/handle/owner lookups
+   * index into, never a second source [LAW:one-source-of-truth]. Order is the
+   * store's natural one; the canonical browse ordering is the catalog seam's concern,
+   * applied above this read [LAW:decomposition].
+   */
+  allChannels(): Promise<readonly Channel[]>;
   /** Rename: replace only the handle. The service guarantees the new handle is free. */
   updateHandle(id: ChannelId, handle: Handle): Promise<void>;
   /** Replace only the public profile. The service guarantees the channel exists. */
@@ -79,6 +87,10 @@ export class InMemoryChannelStore implements ChannelStore {
   channelByOwner(ownerId: AccountId): Promise<Channel | undefined> {
     const id = this.#idByOwner.get(ownerId);
     return Promise.resolve(id === undefined ? undefined : this.#channels.get(id));
+  }
+
+  allChannels(): Promise<readonly Channel[]> {
+    return Promise.resolve([...this.#channels.values()]);
   }
 
   updateHandle(id: ChannelId, handle: Handle): Promise<void> {

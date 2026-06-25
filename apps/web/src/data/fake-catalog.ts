@@ -16,6 +16,7 @@ import {
 } from '@crowdship/menu';
 import { show } from '@crowdship/std';
 
+import { liveFirst } from './roster-order';
 import type {
   ChannelSlug,
   ChannelView,
@@ -218,7 +219,7 @@ export const createFakeCatalog = (
     // Every builder, live first then by audience — a sort over DERIVED liveness, not a
     // filter: offline builders stay in the roster (their channel is still a resume).
     const summaries = await Promise.all(SEED.map(async (b) => toSummary(b, await isChannelLive(b.slug))));
-    return summaries.sort((a, b) => Number(b.isLive) - Number(a.isLive) || b.viewerCount - a.viewerCount);
+    return summaries.sort(liveFirst);
   },
 
   channel: async (slug) => {

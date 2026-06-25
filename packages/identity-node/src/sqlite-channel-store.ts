@@ -92,6 +92,13 @@ export class SqliteChannelStore implements ChannelStore {
     return Promise.resolve(row === undefined ? undefined : toChannel(row));
   }
 
+  allChannels(): Promise<readonly Channel[]> {
+    // Every row through the same trust-boundary rebuild a single lookup uses, so the
+    // roster read and the by-handle read yield identical values [LAW:one-source-of-truth].
+    const rows = this.#db.prepare(SELECT).all() as readonly Row[];
+    return Promise.resolve(rows.map(toChannel));
+  }
+
   updateHandle(id: ChannelId, value: Handle): Promise<void> {
     // Row-targeted: an absent channel changes nothing rather than being silently
     // created [LAW:no-silent-failure]. The service guarantees existence first.

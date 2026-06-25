@@ -79,6 +79,13 @@ export interface ChannelService {
   channelByHandle(handle: Handle): Promise<Channel | undefined>;
   channelByOwner(ownerId: AccountId): Promise<Channel | undefined>;
 
+  /**
+   * Every claimed channel — the roster the discovery surface projects builders from.
+   * Identity is the single source of truth for "which channels exist"
+   * [LAW:one-source-of-truth]; the catalog reads this rather than holding its own list.
+   */
+  allChannels(): Promise<readonly Channel[]>;
+
   /** Rename the public handle. The stable {@link ChannelId} is unchanged, so no reference downstream breaks. */
   rename(id: ChannelId, handle: Handle): Promise<Result<Channel, RenameError>>;
 
@@ -189,6 +196,10 @@ export class StandardChannelService implements ChannelService {
 
   channelByOwner(ownerId: AccountId): Promise<Channel | undefined> {
     return this.#deps.store.channelByOwner(ownerId);
+  }
+
+  allChannels(): Promise<readonly Channel[]> {
+    return this.#deps.store.allChannels();
   }
 
   async rename(id: ChannelId, handle: Handle): Promise<Result<Channel, RenameError>> {

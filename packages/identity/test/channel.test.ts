@@ -406,6 +406,9 @@ class FailFirstInsertStore implements ChannelStore {
   channelByOwner(ownerId: AccountId): Promise<Channel | undefined> {
     return this.#inner.channelByOwner(ownerId);
   }
+  allChannels(): Promise<readonly Channel[]> {
+    return this.#inner.allChannels();
+  }
   updateHandle(id: ChannelId, value: Handle): Promise<void> {
     return this.#inner.updateHandle(id, value);
   }
