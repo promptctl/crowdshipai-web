@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
-import type { FundResult, SpendResult } from '@/data/buy-result';
+import type { FundResult, PledgeResult, SpendResult } from '@/data/buy-result';
 import type { ChatResult } from '@/data/chat-result';
 import { parseChatMessage, parseFiredEffect, parseViewerPresence } from '@/data/live-event';
-import type { ChannelView, ChatMessage, PricedOffer } from '@/data/types';
+import type { ChannelView, ChatMessage, PoolView, PricedOffer } from '@/data/types';
 import { sendChat } from '@/server/chat-actions';
-import { buyCoins, buyOffer } from '@/server/market-actions';
+import { buyCoins, buyOffer, listPools, pledgeToPool } from '@/server/market-actions';
 
 import { BuilderAvatar } from './BuilderAvatar';
 import { Chat } from './Chat';
@@ -46,7 +46,44 @@ import { StreamStage } from './StreamStage';
  *  new outcome arm is a compile error [LAW:dataflow-not-control-flow]. The fired line
  *  is NOT here — it arrives from the live channel, not from the buyer's own result. */
 type Notice = { readonly tone: 'ok' | 'info' | 'warn' | 'error'; readonly text: string };
-type Delta = { readonly balance?: number; readonly notice: Notice };
+type Delta = {
+  readonly balance?: number;
+  readonly notice: Notice;
+  /** Present when a pledge tipped a pool and it auto-released — carry the event so
+   *  the surface can append it to the chat log in view of the stream [LAW:dataflow-not-control-flow]. */
+  readonly poolReleased?: PoolView;
+  /** Present when a pledge moved coins — carry the updated pool so the panel reflects
+   *  the ledger's new escrow balance without a second round-trip [LAW:one-source-of-truth]. */
+  readonly poolUpdated?: PoolView;
+};
+
+const pledgeDelta = (r: PledgeResult): Delta => {
+  switch (r.kind) {
+    case 'contributed-pending':
+      return {
+        balance: r.balance,
+        poolUpdated: r.pool,
+        notice: { tone: 'ok', text: `Pledged — ◎ ${r.pool.pooledCoins.toLocaleString('en-US')} / ${r.pool.targetCoins.toLocaleString('en-US')} pooled.` },
+      };
+    case 'contributed-released':
+      return {
+        balance: r.balance,
+        poolUpdated: r.pool,
+        poolReleased: r.pool,
+        notice: { tone: 'ok', text: `Pool hit its target — auto-released to the builder!` },
+      };
+    case 'insufficient-coins':
+      return { balance: r.balance, notice: { tone: 'warn', text: NEED_COINS } };
+    case 'pledge-refused':
+      return { balance: r.balance, notice: { tone: 'error', text: 'The ledger refused this pledge.' } };
+    case 'invalid-pledge':
+      return { notice: { tone: 'error', text: 'This pledge could not be routed.' } };
+    case 'must-authenticate':
+      return { notice: { tone: 'info', text: 'Sign in to pledge coins.' } };
+    case 'no-such-pool':
+      return { notice: { tone: 'error', text: 'That pool is no longer available.' } };
+  }
+};
 
 const NEED_COINS = 'Not enough coins — buy some to spend.';
 const RECONCILE_SPEND =
@@ -133,6 +170,7 @@ export function WatchSurface({
   channel,
   initialBalance,
   initialViewerCount,
+  initialPools,
   signedIn,
 }: {
   readonly channel: ChannelView;
@@ -141,12 +179,17 @@ export function WatchSurface({
    *  server edge — the registry is its source of truth, never the catalog's static
    *  summary or this feed [LAW:one-source-of-truth]. The surface keeps it live below. */
   readonly initialViewerCount: number;
+  /** The builder's funding pools as of the first paint — their live escrow balances,
+   *  read at the server edge [LAW:one-source-of-truth]. Updated client-side as
+   *  backers pledge so the panel reflects the ledger without a page reload. */
+  readonly initialPools: readonly PoolView[];
   /** Whether a live session backs this view — the chat input is a courtesy gate on
    *  it; the send action is the real authenticator [LAW:single-enforcer]. */
   readonly signedIn: boolean;
 }) {
   const { stream } = channel;
   const [messages, setMessages] = useState<readonly ChatMessage[]>(channel.chat);
+  const [pools, setPools] = useState<readonly PoolView[]>(initialPools);
   // The viewer count is owned here and seeded from the registry's reading at the edge,
   // then driven live by presence frames off the one subscription below. It is derived
   // state surfaced from the registry's truth, never a tally this surface keeps itself
@@ -208,9 +251,29 @@ export function WatchSurface({
   // so the surface never shows a stale balance beside a fresh notice [LAW:one-source-of-truth].
   // The fired chat line is NOT applied here — it arrives over the live channel above,
   // the same broadcast every other watcher sees.
+  // A pool release IS surfaced here — it is synchronous in the pledge response, so
+  // the backer who tips the target sees the settlement event immediately as a chat line,
+  // even before the live feed carries it (the feed is the durable path; this is the
+  // backer's own fast-path confirmation, same spirit as a fired-effect ack) [LAW:dataflow-not-control-flow].
   const apply = (delta: Delta) => {
     if (delta.balance !== undefined) setBalance(delta.balance);
     setNotice(delta.notice);
+    if (delta.poolUpdated !== undefined) {
+      const updated = delta.poolUpdated;
+      setPools((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    }
+    if (delta.poolReleased !== undefined) {
+      const released = delta.poolReleased;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: mintId('settlement'),
+          author: '',
+          text: '',
+          settledPool: { title: released.title, pooledCoins: released.pooledCoins },
+        },
+      ]);
+    }
   };
 
   const onSpend = async (offer: PricedOffer) => {
@@ -230,6 +293,18 @@ export function WatchSurface({
     setBusy(true);
     try {
       apply(fundDelta(await buyCoins(amount, crypto.randomUUID())));
+    } catch {
+      setNotice(UNCONFIRMED);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onPledge = async (poolId: string, amount: number) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      apply(pledgeDelta(await pledgeToPool(poolId, amount, crypto.randomUUID())));
     } catch {
       setNotice(UNCONFIRMED);
     } finally {
@@ -301,6 +376,11 @@ export function WatchSurface({
               {notice.text}
             </p>
           )}
+          {pools.length > 0 && (
+            <div className="overflow-hidden rounded-lg border border-edge bg-surface">
+              <Pools pools={pools} balance={balance ?? 0} busy={busy} onPledge={onPledge} />
+            </div>
+          )}
           <div className="overflow-hidden rounded-lg border border-edge bg-surface">
             <Menu offers={channel.menu} balance={balance ?? 0} onSpend={onSpend} />
           </div>
@@ -310,6 +390,89 @@ export function WatchSurface({
         </aside>
       </div>
     </main>
+  );
+}
+
+/**
+ * The funding pools panel: each pool the builder has opened, with a progress bar
+ * and a pledge button. Collapsed when there are no pools (nothing to render, not an
+ * empty state UI). The panel is a pure value consumer — pledge amounts are fixed
+ * suggestions, not free text, keeping the pledge path predictable
+ * [LAW:dataflow-not-control-flow]. The variability is the pool list, a value, not
+ * branches on "are there pools" [LAW:no-mode-explosion].
+ */
+function Pools({
+  pools,
+  balance,
+  busy,
+  onPledge,
+}: {
+  readonly pools: readonly PoolView[];
+  readonly balance: number;
+  readonly busy: boolean;
+  readonly onPledge: (poolId: string, amount: number) => void;
+}) {
+  return (
+    <div className="p-3">
+      <span className="text-xs font-semibold uppercase tracking-wider text-fog">fund a feature</span>
+      <div className="mt-2.5 flex flex-col gap-3">
+        {pools.map((pool) => (
+          <PoolCard key={pool.id} pool={pool} balance={balance} busy={busy} onPledge={onPledge} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A single pool card: progress bar, pooled/target display, and a pledge button. */
+function PoolCard({
+  pool,
+  balance,
+  busy,
+  onPledge,
+}: {
+  readonly pool: PoolView;
+  readonly balance: number;
+  readonly busy: boolean;
+  readonly onPledge: (poolId: string, amount: number) => void;
+}) {
+  const pct = pool.targetCoins > 0 ? Math.min(100, (pool.pooledCoins / pool.targetCoins) * 100) : 0;
+  // A fixed suggestion list, not a free-entry field — keeps the pledge path predictable and
+  // lets the backer contribute with one click [LAW:dataflow-not-control-flow]. The variety
+  // is the amounts list, a value, not code branches on which amount was chosen.
+  const PLEDGE_AMOUNTS = [100, 500, 1000];
+  return (
+    <div className="rounded-sm border border-edge bg-surface-2 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs font-semibold text-chalk leading-snug">{pool.title}</p>
+        {pool.released && (
+          <span className="shrink-0 rounded-sm bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+            SHIPPED
+          </span>
+        )}
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface">
+        <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <p className="mt-1 text-[11px] text-fog">
+        ◎ {pool.pooledCoins.toLocaleString('en-US')} / {pool.targetCoins.toLocaleString('en-US')}
+      </p>
+      {!pool.released && (
+        <div className="mt-2 flex gap-1">
+          {PLEDGE_AMOUNTS.map((amount) => (
+            <button
+              key={amount}
+              type="button"
+              disabled={busy || balance < amount}
+              onClick={() => onPledge(pool.id, amount)}
+              className="flex-1 rounded-sm border border-edge bg-surface px-1.5 py-1 text-[11px] font-semibold text-chalk transition-colors hover:border-accent-dim hover:text-accent disabled:cursor-not-allowed disabled:text-fog"
+            >
+              +{amount}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

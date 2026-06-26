@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 
 import { WatchSurface } from '@/components/WatchSurface';
 import { getCatalog } from '@/data/catalog';
-import { walletBalance } from '@/server/market-actions';
+import { listPools, walletBalance } from '@/server/market-actions';
 import { getPresenceRegistry, presenceTopicOf } from '@/server/presence';
 import { currentPrincipal } from '@/server/principal';
 
@@ -33,6 +33,7 @@ export default async function WatchPage({ params }: { readonly params: Promise<{
       channel={channel}
       initialBalance={await walletBalance()}
       initialViewerCount={getPresenceRegistry().countOf(presenceTopicOf(slug))}
+      initialPools={await listPools(slug)}
       signedIn={(await currentPrincipal()) !== null}
     />
   );

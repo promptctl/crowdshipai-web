@@ -37,7 +37,18 @@ export function Chat({
             stay scrollable instead of being clipped above a justify-end edge. */}
         <div className="mt-auto flex flex-col gap-1.5">
         {messages.map((m) =>
-          m.firedEffectKind !== undefined ? (
+          m.settledPool !== undefined ? (
+            // Pool settlement: the whole pool shipped to the builder. Distinct visual
+            // from a fired effect — a bigger moment, a bigger line [LAW:one-type-per-behavior].
+            <div
+              key={m.id}
+              className="rounded-sm border border-emerald-500/40 bg-emerald-500/10 px-2 py-2 text-xs text-emerald-300"
+            >
+              <span className="font-bold">SHIPPED</span>
+              {' '}◎ {m.settledPool.pooledCoins.toLocaleString('en-US')} coins released —{' '}
+              <span className="font-semibold">{m.settledPool.title}</span>
+            </div>
+          ) : m.firedEffectKind !== undefined ? (
             <div
               key={m.id}
               className="rounded-sm border border-accent-dim/40 bg-accent/10 px-2 py-1.5 text-xs text-accent"

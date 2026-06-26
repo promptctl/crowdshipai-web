@@ -1,3 +1,5 @@
+import type { PoolView } from './types';
+
 /**
  * What a backer's surface learns after a buy — the money outcome projected to the
  * one fact the UI must render, derived from the purchase/on-ramp pipelines' own
@@ -48,3 +50,42 @@ export type FundResult =
   | { readonly kind: 'invalid-routing'; readonly balance: number }
   /** No live session — a viewer must be signed in to buy coins. */
   | { readonly kind: 'must-authenticate' };
+
+/**
+ * The outcome of pledging coins to a builder's funding pool. Mirrors the shape of
+ * {@link SpendResult}: every arm carries the authoritative wallet balance re-read from
+ * the ledger so the surface shows truth, not a guess. The two `contributed-*` arms
+ * preserve the distinction between "coins moved, pool still building" and "coins moved
+ * AND pool tipped — it just shipped" — collapsing them would hide the release event that
+ * is CrowdShip's core differentiator [LAW:no-silent-failure]. Each arm also carries the
+ * updated `pool` view so the surface reflects the ledger's new escrow balance without a
+ * second round-trip [LAW:one-source-of-truth].
+ */
+export type PledgeResult =
+  /** Coins moved into the pool's escrow; the target is not yet reached. */
+  | { readonly kind: 'contributed-pending'; readonly balance: number; readonly pool: PoolView }
+  /** Coins moved AND this pledge tipped the target — the pool auto-released to the builder. */
+  | { readonly kind: 'contributed-released'; readonly balance: number; readonly pool: PoolView }
+  /** The ledger refused for want of coins — no coins moved. */
+  | { readonly kind: 'insufficient-coins'; readonly balance: number }
+  /** The ledger refused for another reason (key conflict, unknown account) — no coins moved. */
+  | { readonly kind: 'pledge-refused'; readonly balance: number }
+  /** The pledge could not be routed (backer and pool are the same account). */
+  | { readonly kind: 'invalid-pledge' }
+  /** No live session — a viewer must be signed in to pledge. */
+  | { readonly kind: 'must-authenticate' }
+  /** The pool id names no open pool — it may have been cancelled. */
+  | { readonly kind: 'no-such-pool' };
+
+/**
+ * The outcome of a builder opening a new funding pool in the studio. `opened` is the
+ * only success arm; the rest are the three ways a valid request can still be refused
+ * before a single coin moves [LAW:no-silent-failure].
+ */
+export type PoolOpenResult =
+  | { readonly kind: 'opened'; readonly pool: PoolView }
+  | { readonly kind: 'must-authenticate' }
+  /** The authenticated principal does not own a channel — can't route payouts yet. */
+  | { readonly kind: 'no-channel' }
+  /** The target amount is zero, negative, or not a safe integer. */
+  | { readonly kind: 'invalid-target' };

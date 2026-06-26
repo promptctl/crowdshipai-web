@@ -80,6 +80,28 @@ export interface OfferEffect {
   readonly summary: string;
 }
 
+/**
+ * A funding pool as the watch surface sees it: identity, title, live progress, and settled status.
+ * All primitives — no branded types or bigints — so the value crosses the server-action
+ * boundary cleanly [LAW:effects-at-boundaries]. The authoritative progress (`pooledCoins`) is
+ * the ledger's escrow balance projected to a number, never a client-side running tally
+ * [LAW:one-source-of-truth].
+ */
+export interface PoolView {
+  /** The pool's stable identity — the branded `PoolId` serialized as a plain string at
+   *  the seam, so the client holds a value it can pass back to the pledge action without
+   *  depending on a server-only brand [LAW:one-way-deps]. */
+  readonly id: string;
+  readonly title: string;
+  readonly builderSlug: string;
+  readonly targetCoins: number;
+  /** The live pooled total — the ledger's escrow balance at read time, re-derived on every
+   *  server action that touches this pool, never a stored count this surface increments
+   *  [LAW:one-source-of-truth]. */
+  readonly pooledCoins: number;
+  readonly released: boolean;
+}
+
 /** One line in the live chat. */
 export interface ChatMessage {
   readonly id: string;
@@ -94,6 +116,11 @@ export interface ChatMessage {
    * wiring a producer or reader off it cannot mistake a kind for a label
    * [FRAMING:representation]. */
   readonly firedEffectKind?: string;
+  /** Present when this line is a POOL SETTLEMENT EVENT — the whole pool shipped to the builder.
+   *  One message type, multiple line kinds [LAW:one-type-per-behavior]: a settled pool is not
+   *  a separate message list but one more shape of the live log, so the chat column renders
+   *  the moment settlement happens in view of the stream (e5a.5) [LAW:effects-at-boundaries]. */
+  readonly settledPool?: { readonly title: string; readonly pooledCoins: number };
 }
 
 /**

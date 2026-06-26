@@ -4,8 +4,10 @@ import { redirect } from 'next/navigation';
 import { ClaimChannelForm } from '@/components/ClaimChannelForm';
 import { GoLiveControl } from '@/components/GoLiveControl';
 import { MenuAuthoringForm } from '@/components/MenuAuthoringForm';
+import { PoolAuthoringForm } from '@/components/PoolAuthoringForm';
 import { getCatalog } from '@/data/catalog';
 import { getChannelService } from '@/server/channels';
+import { listPools } from '@/server/market-actions';
 import { currentPrincipal } from '@/server/principal';
 
 /**
@@ -30,6 +32,9 @@ export default async function StudioPage() {
   // the same catalog seam a viewer reads, so the studio edits exactly what the audience
   // sees [LAW:one-source-of-truth]. A builder with no channel has no menu to read.
   const currentMenu = channel === undefined ? [] : ((await getCatalog().channel(channel.handle))?.menu ?? []);
+  // The builder's live pools — their escrow balances are the ledger's truth at the
+  // instant of this render; the client component keeps the list live as new pools open.
+  const currentPools = channel === undefined ? [] : await listPools(channel.handle);
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
@@ -61,6 +66,15 @@ export default async function StudioPage() {
               overlay reacts to. It’s yours: sell whatever you want.
             </p>
             <MenuAuthoringForm initialOffers={currentMenu} />
+          </section>
+          <section className="mt-12">
+            <h2 className="text-lg font-bold tracking-tight text-chalk">funding pools</h2>
+            <p className="mt-1 mb-5 max-w-xl text-sm text-fog">
+              Open a pool and let your audience crowd-fund a feature. The instant the target is
+              reached, the whole pool auto-releases to you — the backer who tips it watches it
+              ship live.
+            </p>
+            <PoolAuthoringForm initialPools={currentPools} />
           </section>
         </>
       )}

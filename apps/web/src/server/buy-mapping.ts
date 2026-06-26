@@ -1,7 +1,11 @@
 import type { OnRampOutcome } from '@crowdship/on-ramp';
+import type { ContributionOutcome } from '@crowdship/pool';
 import type { PurchaseOutcome } from '@crowdship/purchase';
+import type { ReleaseOutcome } from '@crowdship/release';
 
-import type { FundResult, SpendResult } from '../data/buy-result';
+import type { FundResult, PledgeResult, SpendResult } from '../data/buy-result';
+import type { PoolView } from '../data/types';
+import type { FeaturePoolView } from './market';
 
 /**
  * Parse an untrusted coin amount from the wire into a positive, exact count — or
@@ -64,5 +68,60 @@ export const toFundResult = (outcome: OnRampOutcome, balance: number): FundResul
       return { kind: 'credit-refused', balance };
     case 'invalid-routing':
       return { kind: 'invalid-routing', balance };
+  }
+};
+
+/**
+ * Project a domain {@link FeaturePoolView} (branded id, bigint amounts) to the
+ * serializable {@link PoolView} the surface holds — plain string and number only.
+ * Pure and zero-loss: the brand is compile-time only, and `Number(bigint)` is
+ * lossless for coin amounts that fit in a JS safe integer (< 2^53, which the
+ * ledger kernel's own cap enforces) [LAW:effects-at-boundaries].
+ */
+export const toPoolView = (view: FeaturePoolView): PoolView => ({
+  id: String(view.id),
+  title: view.title,
+  builderSlug: view.builderSlug,
+  targetCoins: Number(view.target),
+  pooledCoins: Number(view.pooled),
+  released: view.released,
+});
+
+/**
+ * Project the pool pledge's composite domain outcome onto the surface result. Pure and
+ * total over both the {@link ContributionOutcome} and the {@link ReleaseOutcome} it
+ * pairs with, so a new arm in either is a compile error here rather than a silently
+ * dropped case [LAW:dataflow-not-control-flow].
+ *
+ * The `contributed-released` vs `contributed-pending` split is preserved — not collapsed
+ * into a single `contributed` — because the release IS the product differentiator:
+ * "the backer whose pledge tips the target watches the whole pool ship." Collapsing it
+ * would hide the moment of settlement [LAW:no-silent-failure].
+ *
+ * The `release` arm is trusted conservatively: any non-`released` / non-`already-released`
+ * release outcome after a successful contribution yields `contributed-pending`. The coins
+ * ARE safely in escrow; the engine retries on the next pledge or explicit poll. The
+ * balance and pool view are always the ledger's truth re-read after the attempt
+ * [LAW:one-source-of-truth].
+ */
+export const toPledgeResult = (
+  contribution: ContributionOutcome,
+  release: ReleaseOutcome<unknown>,
+  pool: PoolView,
+  balance: number,
+): PledgeResult => {
+  switch (contribution.kind) {
+    case 'contributed': {
+      const shipped = release.kind === 'released' || release.kind === 'already-released';
+      return shipped
+        ? { kind: 'contributed-released', balance, pool }
+        : { kind: 'contributed-pending', balance, pool };
+    }
+    case 'refused':
+      return contribution.error.kind === 'would-overdraft'
+        ? { kind: 'insufficient-coins', balance }
+        : { kind: 'pledge-refused', balance };
+    case 'invalid-contribution':
+      return { kind: 'invalid-pledge' };
   }
 };

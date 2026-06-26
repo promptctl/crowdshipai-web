@@ -1,10 +1,14 @@
 'use server';
 
-import type { FundResult, SpendResult } from '../data/buy-result';
+import { poolId as makePoolId } from '@crowdship/pool';
+
+import type { FundResult, PledgeResult, PoolOpenResult, SpendResult } from '../data/buy-result';
+import type { PoolView } from '../data/types';
 import { getCatalog } from '../data/catalog';
-import { coinPurchaseAmount, toFundResult, toSpendResult } from './buy-mapping';
+import { coinPurchaseAmount, toFundResult, toPledgeResult, toPoolView, toSpendResult } from './buy-mapping';
+import { getChannelService } from './channels';
 import { announceEffectFired } from './live-feed';
-import { coinBalanceOf, creditCoins, spendOnOffer } from './market';
+import { coinBalanceOf, creditCoins, listFeaturePools, openFeaturePool, pledgeToFeaturePool, spendOnOffer } from './market';
 import { currentPrincipal } from './principal';
 
 /**
@@ -75,4 +79,70 @@ export async function walletBalance(): Promise<number | null> {
   const principal = await currentPrincipal();
   if (principal === null) return null;
   return Number(await coinBalanceOf(principal));
+}
+
+/**
+ * Every funding pool a builder has opened, as the backer surface sees them — their
+ * titles, live pooled totals (ledger escrow balances), and settled status. A pure
+ * read with no authentication requirement: pools are public, the same way the menu
+ * and chat are visible without a wallet [LAW:effects-at-boundaries].
+ */
+export async function listPools(slug: string): Promise<readonly PoolView[]> {
+  const views = await listFeaturePools(slug);
+  return views.map(toPoolView);
+}
+
+/**
+ * A backer pledges coins toward a builder's funding pool, and the surface composes
+ * fund-then-release: the pledge action returns immediately with whether the pool
+ * shipped. The `attemptId` is the backer's per-click intent — the same discipline
+ * as `buyOffer` and `buyCoins` [LAW:no-ambient-temporal-coupling]. The pool's updated
+ * view is carried in every successful arm, re-read from the ledger's escrow balance,
+ * so the surface never tallies coins itself [LAW:one-source-of-truth].
+ */
+export async function pledgeToPool(
+  poolId: string,
+  amountCoins: number,
+  attemptId: string,
+): Promise<PledgeResult> {
+  const principal = await currentPrincipal();
+  if (principal === null) return { kind: 'must-authenticate' };
+
+  const amount = coinPurchaseAmount(amountCoins);
+  if (amount === null) return { kind: 'invalid-pledge' };
+
+  const id = makePoolId(poolId);
+  if (!id.ok) return { kind: 'no-such-pool' };
+
+  try {
+    const outcome = await pledgeToFeaturePool(principal, id.value, amount, attemptId);
+    const balance = Number(await coinBalanceOf(principal));
+    return toPledgeResult(outcome.contribution, outcome.release, toPoolView(outcome.pool), balance);
+  } catch {
+    // The only throw path is "no feature pool <id>" — the pool was opened but is no longer
+    // in the registry (e.g. process restart with in-memory store). Loud in the server log;
+    // the surface gets a typed absence [LAW:no-silent-failure].
+    return { kind: 'no-such-pool' };
+  }
+}
+
+/**
+ * A builder opens a new funding pool from their studio. The pool's slug is derived from
+ * the authenticated principal's channel — the single routing fact the money path owns
+ * [LAW:single-enforcer]. The `targetCoins` is validated at this trust boundary so the
+ * ledger's positive-amount invariant is enforced before any account is touched
+ * [LAW:no-ambient-temporal-coupling].
+ */
+export async function openPool(title: string, targetCoins: number): Promise<PoolOpenResult> {
+  const principal = await currentPrincipal();
+  if (principal === null) return { kind: 'must-authenticate' };
+
+  const target = coinPurchaseAmount(targetCoins);
+  if (target === null) return { kind: 'invalid-target' };
+
+  const channel = await getChannelService().channelByOwner(principal.id);
+  if (channel === undefined) return { kind: 'no-channel' };
+
+  const view = await openFeaturePool(channel.handle, title.trim(), target);
+  return { kind: 'opened', pool: toPoolView(view) };
 }
