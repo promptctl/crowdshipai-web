@@ -15,6 +15,8 @@ import {
 import type { GoLiveResult } from '@/data/go-live-result';
 import { endLive, goLive } from '@/server/stream-actions';
 
+import { startScreenRecording, type ScreenRecording } from './screen-recorder';
+
 /**
  * The builder's go-live control — the PRODUCT path for "someone building, live": it
  * captures the builder's screen AND their webcam and publishes both into their LiveKit
@@ -22,14 +24,26 @@ import { endLive, goLive } from '@/server/stream-actions';
  * does ONE thing and owns ONE thing: the publish lifecycle [LAW:composability].
  *
  * Phase is OWNED STATE, never inferred from render order or an incidental callback
- * [LAW:no-ambient-temporal-coupling]: `offline → connecting → live → offline`. Going
- * live acquires the credential, connects, and publishes; ending unpublishes,
- * disconnects, and tears the room down through the broker. Every way a stream can end —
- * the builder clicks "end", the browser's own "stop sharing", or a remote disconnect —
- * routes through the SAME re-entrant {@link teardown}, so there is one teardown path, not
- * three that could race [LAW:single-enforcer]. The camera is held in the SAME room as the
- * screen, so `disconnect()` stops both local tracks through that one owner — the face
- * never needs its own teardown path.
+ * [LAW:no-ambient-temporal-coupling]: `offline → connecting → live ⇄ reconnecting →
+ * offline`. Going live acquires the credential, connects, and publishes; a transport
+ * drop the client is re-establishing is the REPRESENTED `reconnecting` arm driven by
+ * the room's own events — never an inferred flag or a settle delay
+ * [LAW:types-are-the-program]; ending unpublishes, disconnects, and tears the room down
+ * through the broker. Every way a stream can end — the builder clicks "end", the
+ * browser's own "stop sharing", a remote disconnect, or the tab itself going away
+ * (unmount and `pagehide` fire a beacon the page's death cannot cancel, so the server
+ * never lies "live" for a closed tab) — routes through the SAME re-entrant
+ * {@link teardown}, so there is one teardown path, not four that could race
+ * [LAW:single-enforcer]. The camera is held in the SAME room as the screen, so
+ * `disconnect()` stops both local tracks through that one owner — the face never needs
+ * its own teardown path.
+ *
+ * RECORDING is a facet of being live, not a fifth phase: it exists exactly while a
+ * local capture does (`live` and `reconnecting` carry it; the other arms cannot
+ * represent it) [LAW:types-are-the-program]. It records the builder's LOCAL screen
+ * tracks, so a reconnect drops frames for the audience but never for the file; ending
+ * the stream in any way stops the recording through the one teardown and still
+ * delivers the file.
  *
  * The webcam is an OPTIONAL track: a builder with no camera, or who denies the permission,
  * still streams their screen — the face is honest absence (`null`), not a hard gate on
@@ -43,13 +57,23 @@ import { endLive, goLive } from '@/server/stream-actions';
 
 /** The publish lifecycle as a closed union: `notice` (the reason a prior attempt ended
  *  or was refused) is representable ONLY while offline, so "a notice during a live
- *  stream" is not a state that can exist [LAW:types-are-the-program]. */
+ *  stream" is not a state that can exist — and `recording` is representable ONLY while
+ *  a capture exists, so "recording while offline" cannot either
+ *  [LAW:types-are-the-program]. */
 type Phase =
   | { readonly kind: 'offline'; readonly notice: string | null }
   | { readonly kind: 'connecting' }
-  | { readonly kind: 'live' };
+  | { readonly kind: 'live'; readonly recording: boolean }
+  | { readonly kind: 'reconnecting'; readonly recording: boolean };
 
 const OFFLINE: Phase = { kind: 'offline', notice: null };
+
+/** The beacon target that ends this builder's stream when the page itself goes away —
+ *  the same one shared server end-path the explicit action rides [LAW:one-source-of-truth]. */
+const END_BEACON_PATH = '/studio/live/end';
+
+const recordingFilename = (slug: string): string =>
+  `crowdship-${slug}-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
 
 const CAPTURE_CANCELLED = 'Screen capture was cancelled — pick a window or screen to go live.';
 const CONNECT_FAILED = 'Could not connect to the stream. Try going live again.';
@@ -81,6 +105,10 @@ const blockedNotice = (result: Exclude<GoLiveResult, { kind: 'ready' }>): string
   switch (result.kind) {
     case 'must-authenticate':
       return 'Sign in to go live.';
+    case 'barred':
+      // The policy boundary's denial, in the moderator's own words — a refusal that
+      // cannot say why is a silent one [LAW:no-silent-failure].
+      return `You cannot go live: ${result.reason}`;
     case 'no-channel':
       return 'Claim a channel before you go live.';
     case 'no-sfu':
@@ -98,6 +126,12 @@ export function GoLiveControl({ slug }: { readonly slug: string }) {
   // the lifecycle owner reaches the one room across the go-live and end interactions, and
   // `roomRef` doubles as the re-entry guard: a teardown with no room is a no-op echo.
   const roomRef = useRef<Room | null>(null);
+  // The captured screen tracks (video + audio, never the face), held so a recording
+  // started mid-stream records the same capture that is publishing — one capture, two
+  // consumers, no second getDisplayMedia [LAW:one-source-of-truth].
+  const screenMediaRef = useRef<readonly MediaStreamTrack[]>([]);
+  // The active recording handle — a resource like the room, owned by the same teardown.
+  const recorderRef = useRef<ScreenRecording | null>(null);
   const previewRef = useRef<HTMLVideoElement>(null);
   const facePreviewRef = useRef<HTMLVideoElement>(null);
   // Whether the builder's own face is previewing right now — view state only, driving the
@@ -107,17 +141,56 @@ export function GoLiveControl({ slug }: { readonly slug: string }) {
 
   // The ONE teardown path. The first call (a room is held) ends the stream; any echo —
   // the `Disconnected` event that `disconnect()` itself emits, a stop-sharing racing the
-  // button — finds no room and returns. `disconnect()` unpublishes and stops the local
-  // tracks; `endLive()` tears the room down server-side, skipped only when the room is
-  // already gone remotely [LAW:no-ambient-temporal-coupling].
+  // button — finds no room and returns. An active recording stops FIRST, so ending the
+  // stream in any way still delivers the file [LAW:no-silent-failure]. `disconnect()`
+  // unpublishes and stops the local tracks; `endLive()` tears the room down server-side,
+  // skipped only when the room is already gone remotely [LAW:no-ambient-temporal-coupling].
   const teardown = async (closeServerSide: boolean) => {
     const room = roomRef.current;
     if (room === null) return;
     roomRef.current = null;
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+    screenMediaRef.current = [];
     room.disconnect();
     setFaceShown(false);
     setPhase(OFFLINE);
     if (closeServerSide) await endLive();
+  };
+
+  // End the stream when the PAGE goes away — the one ending a server action cannot
+  // carry, because the request would die with the tab. Guarded by the same roomRef
+  // re-entry gate as teardown: a tab that is not live sends nothing, and a stream the
+  // teardown already ended sends nothing either. Best-effort by nature (a dead network
+  // loses it), and the SFU's empty-timeout remains the backstop — this makes the
+  // COMMON case honest now instead of five minutes late [LAW:no-silent-failure].
+  const endViaBeacon = () => {
+    if (roomRef.current === null) return;
+    navigator.sendBeacon(END_BEACON_PATH);
+  };
+
+  // The transport's re-establishment window, as represented state driven by the room's
+  // own events — the room is the one timing authority; this only mirrors its
+  // transitions, preserving the recording facet because the LOCAL capture (and so the
+  // file) never blinked [LAW:no-ambient-temporal-coupling]. A frame from another phase
+  // is an echo of a transition this owner already left; it changes nothing.
+  const onReconnecting = () =>
+    setPhase((p) => (p.kind === 'live' ? { kind: 'reconnecting', recording: p.recording } : p));
+  const onReconnected = () =>
+    setPhase((p) => (p.kind === 'reconnecting' ? { kind: 'live', recording: p.recording } : p));
+
+  // Start or stop recording the local screen capture — legal only while a capture
+  // exists, which is exactly the arms that can represent it [LAW:types-are-the-program].
+  const onToggleRecording = () => {
+    if (phase.kind !== 'live' && phase.kind !== 'reconnecting') return;
+    if (phase.recording) {
+      recorderRef.current?.stop();
+      recorderRef.current = null;
+      setPhase({ ...phase, recording: false });
+      return;
+    }
+    recorderRef.current = startScreenRecording(screenMediaRef.current, recordingFilename(slug));
+    setPhase({ ...phase, recording: true });
   };
 
   const onGoLive = async () => {
@@ -149,8 +222,13 @@ export function GoLiveControl({ slug }: { readonly slug: string }) {
 
     const room = new Room();
     // A terminal remote disconnect ends the stream through the same owner; the room is
-    // already gone server-side, so no `endLive()` is owed [LAW:no-ambient-temporal-coupling].
+    // already gone server-side, so no `endLive()` is owed. The client's own
+    // re-establishment window is NOT terminal — it is the `reconnecting` arm, entered
+    // and left on the room's events, never a settle delay [LAW:no-ambient-temporal-coupling].
     room.on(RoomEvent.Disconnected, () => void teardown(false));
+    room.on(RoomEvent.Reconnecting, onReconnecting);
+    room.on(RoomEvent.SignalReconnecting, onReconnecting);
+    room.on(RoomEvent.Reconnected, onReconnected);
     try {
       await room.connect(result.connection.url, result.connection.token);
       for (const track of tracks) await room.localParticipant.publishTrack(track);
@@ -176,20 +254,35 @@ export function GoLiveControl({ slug }: { readonly slug: string }) {
     if (face !== null && facePreviewRef.current !== null) face.attach(facePreviewRef.current);
     setFaceShown(face !== null);
 
+    // What a recording started later will record: the screen capture (build + its
+    // audio), never the face — the same tracks that are publishing.
+    screenMediaRef.current = screenTracks.map((t) => t.mediaStreamTrack);
     roomRef.current = room;
-    setPhase({ kind: 'live' });
+    setPhase({ kind: 'live', recording: false });
   };
 
-  // On unmount, leave cleanly: disconnect the room locally. The server-side room is
-  // reaped by LiveKit's empty-timeout, so a closed tab is a clean leave without relying
-  // on an action firing during teardown [LAW:no-ambient-temporal-coupling].
-  useEffect(
-    () => () => {
+  // The page-death endings, both routed through the same beacon and guards as every
+  // other ending [LAW:single-enforcer]: `pagehide` covers the tab closing or navigating
+  // away at the browser level; the cleanup covers an in-app navigation unmounting this
+  // owner. Either way a live capture cannot survive the page, so the stream is OVER —
+  // the beacon makes the server say so now, and an active recording is stopped so the
+  // file is delivered where delivery is still possible (unmount; a closing tab cannot
+  // receive a download, which is the medium's limit, not a swallowed file).
+  useEffect(() => {
+    window.addEventListener('pagehide', endViaBeacon);
+    return () => {
+      window.removeEventListener('pagehide', endViaBeacon);
+      recorderRef.current?.stop();
+      recorderRef.current = null;
+      endViaBeacon();
       roomRef.current?.disconnect();
       roomRef.current = null;
-    },
-    [],
-  );
+    };
+  }, []);
+
+  // The two arms with a live capture — one derived value so every surface below reads
+  // the same answer to "is there a stream right now" [LAW:one-source-of-truth].
+  const streaming = phase.kind === 'live' || phase.kind === 'reconnecting';
 
   return (
     <div className="flex flex-col gap-4">
@@ -203,7 +296,7 @@ export function GoLiveControl({ slug }: { readonly slug: string }) {
           playsInline
           muted
           className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-300 ${
-            phase.kind === 'live' ? 'opacity-100' : 'opacity-0'
+            streaming ? 'opacity-100' : 'opacity-0'
           }`}
         />
         <video
@@ -212,25 +305,45 @@ export function GoLiveControl({ slug }: { readonly slug: string }) {
           playsInline
           muted
           className={`absolute bottom-3 right-3 aspect-video w-1/4 max-w-[140px] rounded-md border border-edge bg-ink object-cover shadow-lg transition-opacity duration-300 ${
-            phase.kind === 'live' && faceShown ? 'opacity-100' : 'opacity-0'
+            streaming && faceShown ? 'opacity-100' : 'opacity-0'
           }`}
         />
-        {phase.kind !== 'live' && (
+        {!streaming && (
           <div className="absolute inset-0 grid place-items-center text-sm text-fog">
             {phase.kind === 'connecting' ? 'connecting…' : 'your screen appears here once you go live'}
+          </div>
+        )}
+        {phase.kind === 'reconnecting' && (
+          <div className="absolute inset-x-0 top-0 bg-amber-500/90 px-3 py-1.5 text-center text-xs font-semibold text-ink">
+            reconnecting… your capture is intact; the audience will pick you back up in a moment
+          </div>
+        )}
+        {streaming && phase.recording && (
+          <div className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-sm bg-red-500/90 px-2 py-0.5 text-[11px] font-semibold text-white">
+            <span className="live-dot h-1.5 w-1.5 rounded-full bg-white" />
+            REC
           </div>
         )}
       </div>
 
       <div className="flex items-center gap-3">
-        {phase.kind === 'live' ? (
-          <button
-            type="button"
-            onClick={() => void teardown(true)}
-            className="rounded-full bg-red-500/90 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-500"
-          >
-            end stream
-          </button>
+        {streaming ? (
+          <>
+            <button
+              type="button"
+              onClick={() => void teardown(true)}
+              className="rounded-full bg-red-500/90 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-500"
+            >
+              end stream
+            </button>
+            <button
+              type="button"
+              onClick={onToggleRecording}
+              className="rounded-full border border-edge bg-surface-2 px-5 py-2 text-sm font-semibold text-chalk transition-colors hover:border-accent-dim hover:text-accent"
+            >
+              {phase.recording ? 'stop recording' : 'record'}
+            </button>
+          </>
         ) : (
           <button
             type="button"

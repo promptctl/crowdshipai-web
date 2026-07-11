@@ -60,6 +60,19 @@ export const PRESENCE_EVENT = 'presence-count';
 export const SETTLEMENT_EVENT = 'settlement';
 
 /**
+ * The open event-type label a stream-lifecycle moment carries on the wire — the
+ * builder's go-live and end joining the same spine as effects, chat, presence, and
+ * settlement, one more value through the one `LiveFeed`, never a second real-time
+ * channel [LAW:no-mode-explosion]. Minted into a `LiveEventType` by the publish edge
+ * from this very string, so publish and consume cannot drift apart
+ * [LAW:one-source-of-truth]. The frame is a NUDGE, not the authority: liveness truth
+ * stays the ingest broker's room state, read server-side at every page render — this
+ * frame only lets a watcher already on the page see the badge flip the moment it
+ * happens instead of at their next reload [LAW:one-source-of-truth].
+ */
+export const STREAM_LIFECYCLE_EVENT = 'stream-lifecycle';
+
+/**
  * A fired effect as the watch surface renders it: the open effect kind the builder
  * authored (`shoutout`, `poll-vote`, `bounty-pool`, …), carried as data and shown
  * verbatim, never branched on [LAW:dataflow-not-control-flow]. `effectKind` is the
@@ -112,6 +125,17 @@ export type SettledMoment =
 export interface SettlementMoment {
   readonly poolTitle: string;
   readonly settled?: SettledMoment;
+}
+
+/**
+ * A stream-lifecycle moment as it arrives off the wire: the builder's session either
+ * just went live or just ended. Exactly two values, a closed union rather than a
+ * boolean — the wire says which TRANSITION happened, and a phase this build does not
+ * know is a frame it does not claim, never a coerced true/false
+ * [LAW:types-are-the-program].
+ */
+export interface StreamLifecycleMoment {
+  readonly phase: 'live' | 'ended';
 }
 
 /** A record we can index after proving the parsed value is a non-null object. */
@@ -246,4 +270,22 @@ export function parseSettlement(raw: string): SettlementMoment | null {
   const moment = parseSettledMoment(settled);
   if (moment === null) return null;
   return { poolTitle, settled: moment };
+}
+
+/**
+ * Parse one raw SSE `data:` frame into a {@link StreamLifecycleMoment}, or `null` when
+ * the frame is not one — the sibling of the parsers above, reading the same wire trust
+ * boundary the same way. A frame of another type, or a payload whose phase is not one
+ * of the two transitions this build renders, resolves to `null`: not this build's
+ * lifecycle moment, never a swallowed error [LAW:no-silent-failure].
+ */
+export function parseStreamLifecycle(raw: string): StreamLifecycleMoment | null {
+  const frame = decodeFrame(raw);
+  if (frame === null || frame.type !== STREAM_LIFECYCLE_EVENT) return null;
+  if (!isObject(frame.payload)) return null;
+
+  const { phase } = frame.payload;
+  if (phase !== 'live' && phase !== 'ended') return null;
+
+  return { phase };
 }

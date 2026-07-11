@@ -1,4 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
+import { claimChannel, ensureAccount } from './support';
 
 /**
  * crowdshipai-settlement-e5a.10 acceptance, as a DETERMINISTIC check: the settlement
@@ -18,67 +20,6 @@ import { expect, test, type Page } from '@playwright/test';
  * this smoke runs anywhere the app runs.
  */
 
-const PASSWORD = 'password1';
-
-// Sign-up auto-logs-in and redirects to /account; if that arm instead returns the
-// "please log in" notice, fall back to an explicit login — same discipline as the demo
-// acceptance spec. Either way the page ends authenticated.
-//
-// The auth edges rate-limit scrypt-bearing attempts per IP (a deliberate production
-// posture), and every account this suite mints comes from 127.0.0.1 — so back-to-back
-// tests can trip the window. The signup arm ADVERTISES its retry-after ("Please wait
-// Ns"); this helper obeys exactly that advertised backpressure and tries again, rather
-// than failing on the app behaving as designed [LAW:no-ambient-temporal-coupling]: the
-// wait is the server's own figure, never a magic sleep.
-const ensureAccount = async (page: Page, email: string): Promise<void> => {
-  // The signed-in truth is the header's session-aware "log out" — rendered from the
-  // real session, so it cannot race a redirect the way URL matching does (a first-hit
-  // dev compile can hold the /account navigation past any fixed URL wait)
-  // [LAW:one-source-of-truth].
-  const loggedOut = page.getByRole('button', { name: 'log out' });
-  const settle = async (): Promise<boolean> => {
-    await Promise.race([
-      loggedOut.waitFor({ state: 'visible', timeout: 30_000 }).catch(() => undefined),
-      page.getByRole('alert').waitFor({ state: 'visible', timeout: 30_000 }).catch(() => undefined),
-    ]);
-    return loggedOut.isVisible().catch(() => false);
-  };
-
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await page.goto('/signup');
-    await page.locator('input[name="email"]').fill(email);
-    await page.locator('input[name="password"]').fill(PASSWORD);
-    await page.getByRole('button', { name: 'create account' }).click();
-    if (await settle()) return;
-
-    const notice = (await page.getByRole('alert').textContent().catch(() => null)) ?? '';
-    const throttled = notice.match(/wait (\d+)s/);
-    if (throttled !== null) {
-      await page.waitForTimeout((Number(throttled[1]) + 1) * 1000);
-      continue;
-    }
-
-    // "Account created — please log in" (a throttled auto-login) or "already
-    // registered" (a retried signup): the account exists, log in explicitly.
-    await page.goto('/login');
-    await page.locator('input[name="email"]').fill(email);
-    await page.locator('input[name="password"]').fill(PASSWORD);
-    await page.getByRole('button', { name: 'log in' }).click();
-    if (await settle()) return;
-    // Login refuses with one silent message for both bad credentials and a tripped
-    // throttle; the credentials here are known-good, so wait one window and retry.
-    await page.waitForTimeout(11_000);
-  }
-  throw new Error(`could not authenticate ${email} within the rate-limit budget`);
-};
-
-const claimChannel = async (page: Page, handle: string, displayName: string): Promise<void> => {
-  await page.goto('/studio');
-  await page.locator('input[name="handle"]').fill(handle);
-  await page.locator('input[name="displayName"]').fill(displayName);
-  await page.getByRole('button', { name: 'claim channel' }).click();
-  await page.getByRole('button', { name: 'go live' }).waitFor({ state: 'visible', timeout: 20_000 });
-};
 
 // The pool's arithmetic, stated once: a 200-coin target under the demo 10% cut splits
 // into 180 to the builder and 20 to the platform. The tipping pledge deliberately

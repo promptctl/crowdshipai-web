@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+import { E2E_PROXY, E2E_PROXY_PORT } from './e2e/proxy';
+
 /**
  * End-to-end harness config. These specs drive REAL browsers against the REAL LiveKit
  * cloud (and, for the acceptance smoke, the real Next app), so they are deliberately kept
@@ -16,6 +18,11 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:3100',
+    // Every e2e browser tunnels its non-localhost traffic through the node CONNECT
+    // proxy below — see e2e/connect-proxy.mjs for why (a process-level firewall resets
+    // the hermetic browser's direct outbound; node's sockets are allowed). Localhost is
+    // bypassed, so the app under test is still reached directly.
+    proxy: E2E_PROXY,
     // On a failed run, keep the trace and a screenshot so a failure is diagnosable after the
     // fact without re-running — these e2e specs touch the real cloud, so reproducing a flake is
     // not free [LAW:verifiable-goals].
@@ -39,10 +46,19 @@ export default defineConfig({
   // server on 3000. It loads apps/web/.env.local itself, so the real LiveKit broker is bound
   // (LIVEKIT_* present) and go-live returns a real publish credential rather than the no-sfu
   // fake — the acceptance smoke is meaningless against the fake [LAW:no-silent-failure].
-  webServer: {
-    command: 'pnpm exec next dev --port 3100',
-    url: 'http://127.0.0.1:3100',
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  // Beside it, the CONNECT tunnel the browsers proxy through (see e2e/connect-proxy.mjs).
+  webServer: [
+    {
+      command: 'pnpm exec next dev --port 3100',
+      url: 'http://127.0.0.1:3100',
+      reuseExistingServer: true,
+      timeout: 120_000,
+    },
+    {
+      command: `node e2e/connect-proxy.mjs ${E2E_PROXY_PORT}`,
+      url: `http://127.0.0.1:${E2E_PROXY_PORT}/`,
+      reuseExistingServer: true,
+      timeout: 30_000,
+    },
+  ],
 });

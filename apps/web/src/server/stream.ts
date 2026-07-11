@@ -266,8 +266,15 @@ export const publishConnectionFor = (slug: string): Promise<PublishHandoff> =>
  * session and closes it; closing an already-closed or never-opened channel is success,
  * not an error (the broker's `close` is idempotent), so this is safe whether the builder
  * truly went live or never did — on the fake there was no session to begin with.
+ *
+ * Returns whether a live session was actually closed — an honest fact, not a status
+ * code: the lifecycle edge announces "ended" to watchers only for a REAL transition,
+ * so an end fired at an already-offline channel broadcasts nothing rather than a
+ * phantom ending [LAW:no-silent-failure].
  */
-export const endPublishFor = async (slug: string): Promise<void> => {
+export const endPublishFor = async (slug: string): Promise<boolean> => {
   const session = await provider.broker.forChannel(channelRefForSlug(slug));
-  if (session !== null) await provider.broker.close(session.id);
+  if (session === null) return false;
+  await provider.broker.close(session.id);
+  return true;
 };

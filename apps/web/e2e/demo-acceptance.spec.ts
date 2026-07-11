@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { requireLiveKitEnv } from './support';
+import { claimChannel, ensureAccount, goLive, requireLiveKitEnv } from './support';
 
 /**
  * crowdshipai-stream-evf.10 acceptance, as a DETERMINISTIC check — the automated replacement
@@ -19,38 +19,6 @@ import { requireLiveKitEnv } from './support';
  * person would see (frames moving, the badge, the balance, the effect line) — behaviour, never
  * internal structure [LAW:behavior-not-structure].
  */
-
-const PASSWORD = 'password1';
-
-// Sign-up auto-logs-in and redirects to /account; if that arm instead returns the "please log
-// in" notice, fall back to an explicit login. Either way the page ends authenticated.
-const ensureAccount = async (page: Page, email: string): Promise<void> => {
-  await page.goto('/signup');
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(PASSWORD);
-  await page.getByRole('button', { name: 'create account' }).click();
-  await Promise.race([
-    page.waitForURL('**/account', { timeout: 15_000 }).catch(() => undefined),
-    page.getByRole('alert').waitFor({ state: 'visible', timeout: 15_000 }).catch(() => undefined),
-  ]);
-  if (!page.url().includes('/account')) {
-    await page.goto('/login');
-    await page.locator('input[name="email"]').fill(email);
-    await page.locator('input[name="password"]').fill(PASSWORD);
-    await page.getByRole('button', { name: 'log in' }).click();
-    await page.waitForURL('**/account', { timeout: 20_000 });
-  }
-};
-
-// Claim a builder channel; a successful claim redirects to /studio's live surface, where the
-// go-live control appears.
-const claimChannel = async (page: Page, handle: string, displayName: string): Promise<void> => {
-  await page.goto('/studio');
-  await page.locator('input[name="handle"]').fill(handle);
-  await page.locator('input[name="displayName"]').fill(displayName);
-  await page.getByRole('button', { name: 'claim channel' }).click();
-  await page.getByRole('button', { name: 'go live' }).waitFor({ state: 'visible', timeout: 20_000 });
-};
 
 interface Offer {
   readonly label: string;
@@ -73,13 +41,6 @@ const authorOffer = async (page: Page, o: Offer): Promise<void> => {
   await page.getByPlaceholder('offer-1', { exact: true }).fill(o.id);
   await page.getByRole('button', { name: 'save menu' }).click();
   await expect(page.getByRole('status')).toContainText('Menu saved', { timeout: 15_000 });
-};
-
-// Go live: screen capture is mandatory (the fake-media launch flags make getDisplayMedia resolve
-// headless); the webcam is published too. Live is reached when the control flips to "end stream".
-const goLive = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'go live' }).click();
-  await page.getByRole('button', { name: 'end stream' }).waitFor({ state: 'visible', timeout: 60_000 });
 };
 
 // A subscribed track with non-zero dimensions could be a single decoded keyframe; an advancing

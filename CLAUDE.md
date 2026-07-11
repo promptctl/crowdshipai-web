@@ -312,7 +312,14 @@ REFUNDED broadcast, the timeline's refund legs, and the CANCELLED card (e5a.11).
 pool funded *past* its target no longer hands the builder the windfall: the release
 caps at the target and the excess returns to the backers pro-rata inside the same
 atomic settlement, visible in the timeline and back in wallets the instant it ships
-(e5a.8). **Known gap:** contested-after-met — reversing an already-met obligation —
+(e5a.8). The stream itself now has a full **typed lifecycle with one owner** (evf.6):
+go-live passes a conduct gate at the policy boundary (a barred builder is refused with
+the moderator's own reason, and the incident lands in /admin's review queue), a
+transport drop is a represented `reconnecting` state driven by the room's own events, a
+builder can record their session to a real local file while live, and both go-live and
+end flip every watcher's badge the moment they happen over the live-event spine — with
+a closing tab ending its stream honestly via a beacon instead of lingering "live".
+**Known gap:** contested-after-met — reversing an already-met obligation —
 remains engine-only (e5a.9, waiting on the dispute window). This document is the
 source of truth for *intent*; build toward it, and update it when intent changes —
 never let it drift from what we're actually building.

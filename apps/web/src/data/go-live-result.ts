@@ -21,13 +21,16 @@ export type PublishHandoff =
 
 /**
  * A go-live attempt distilled to what the builder's control must do: the provider
- * outcomes above, plus the two the authorization edge adds before the provider is ever
- * reached — `must-authenticate` (no live session) and `no-channel` (signed in, but no
- * claimed channel to stream as). One closed union over BOTH boundaries
+ * outcomes above, plus the arms the authorization edge adds before the provider is ever
+ * reached — `must-authenticate` (no live session), `barred` (the policy boundary denied
+ * the go-live on the actor's conduct standing, carrying the bar's own reason so the
+ * refusal is never silent [LAW:no-silent-failure]), and `no-channel` (signed in, but no
+ * claimed channel to stream as). One closed union over ALL the boundaries
  * [LAW:decomposition], exhaustively matched by the control so every outcome has a
  * defined surface and none falls through [LAW:no-silent-failure].
  */
 export type GoLiveResult =
   | PublishHandoff
   | { readonly kind: 'must-authenticate' }
+  | { readonly kind: 'barred'; readonly reason: string }
   | { readonly kind: 'no-channel' };
