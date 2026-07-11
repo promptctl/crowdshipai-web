@@ -264,14 +264,20 @@ shape is "exercise it in the app," never "the suite is green."
 
 ---
 
-## Open decisions (not yet made)
+## Open decisions
 
-- Custodial vs. on-chain settlement for v1 (lean: custodial now, on-chain headline
-  later), and whether the coin is ever externally tradable.
-- The buy/sell spread and exactly how the cut is taken.
-- KYC, payout, and tax mechanics for builders cashing out.
-- **tinkerpad.ai's role** — likely the in-browser workspace the building actually
-  happens in (i.e., what the stream is pointed at). Pending the founder's brief.
+The founding forks are decided and recorded in `docs/adr/` — custodial settlement
+for v1 (ADR-0001), the coin internal/non-tradable/pegged (ADR-0002), KYC/payouts/tax
+riding Stripe Connect (ADR-0003), and the cut skimmed inside the ledger posting with
+the spread magnitude left as an operational knob (ADR-0004). The ADRs are the
+authoritative record; this document defers to them.
+
+Still genuinely open:
+
+- The actual spread and cut **rates** — a pricing knob deliberately unset
+  (ADR-0004), to be tuned against real usage.
+- Whether the coin ever becomes externally tradable — ADR-0002 says no for v1, with
+  a deliberate revisit once real usage data exists.
 
 ---
 
