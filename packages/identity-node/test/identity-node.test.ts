@@ -79,15 +79,22 @@ describe('ScryptCredentialStore (real hashing)', () => {
     expect(await store.verify(id, aSecret('pw'))).toBe(false);
   });
 
-  test('the secure default params hash and verify without blowing scrypt maxmem', async () => {
-    // No FAST override: exercises DEFAULT_SCRYPT_PARAMS (N=2^17), proving the
-    // strong default is usable and maxmem is auto-sized so scrypt does not throw.
-    const store = new ScryptCredentialStore();
-    const id = anAccount('default-cost');
-    await store.set(id, aSecret('a strong default'));
-    expect(await store.verify(id, aSecret('a strong default'))).toBe(true);
-    expect(await store.verify(id, aSecret('nope'))).toBe(false);
-  });
+  test(
+    'the secure default params hash and verify without blowing scrypt maxmem',
+    async () => {
+      // No FAST override: exercises DEFAULT_SCRYPT_PARAMS (N=2^17), proving the
+      // strong default is usable and maxmem is auto-sized so scrypt does not throw.
+      const store = new ScryptCredentialStore();
+      const id = anAccount('default-cost');
+      await store.set(id, aSecret('a strong default'));
+      expect(await store.verify(id, aSecret('a strong default'))).toBe(true);
+      expect(await store.verify(id, aSecret('nope'))).toBe(false);
+    },
+    // Three real N=2^17 derivations are legitimately slow, and slower still under the
+    // full suite's CPU contention. The explicit ceiling declares that, so the verdict
+    // is about scrypt working — never about machine load [LAW:no-ambient-temporal-coupling].
+    30_000,
+  );
 });
 
 describe('CryptoSecretMint (CSPRNG bearer secrets)', () => {
