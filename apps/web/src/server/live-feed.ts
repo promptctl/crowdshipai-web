@@ -13,12 +13,14 @@ import type { Effect, EffectReceipt } from '@crowdship/menu';
 import {
   CHAT_MESSAGE_EVENT,
   EFFECT_FIRED_EVENT,
+  OVERLAY_STYLE_EVENT,
   PRESENCE_EVENT,
   SETTLEMENT_EVENT,
   STREAM_LIFECYCLE_EVENT,
   type SettlementMoment,
   type StreamLifecycleMoment,
 } from '../data/live-event';
+import type { OverlayStyle } from '../data/overlay-style';
 
 /**
  * The single place the web app decides which {@link LiveFeed} it runs against
@@ -59,6 +61,7 @@ const CHAT_MESSAGE: LiveEventType = mintEventType(CHAT_MESSAGE_EVENT);
 const PRESENCE: LiveEventType = mintEventType(PRESENCE_EVENT);
 const SETTLEMENT: LiveEventType = mintEventType(SETTLEMENT_EVENT);
 const STREAM_LIFECYCLE: LiveEventType = mintEventType(STREAM_LIFECYCLE_EVENT);
+const OVERLAY_STYLE: LiveEventType = mintEventType(OVERLAY_STYLE_EVENT);
 
 // One feed per process, the single owner of the in-memory subscriptions
 // [LAW:no-shared-mutable-globals]. Cached on globalThis so Next.js dev HMR, which
@@ -172,6 +175,25 @@ export const announceStreamLifecycle = (builderSlug: string, moment: StreamLifec
     type: STREAM_LIFECYCLE,
     at: clock.now(),
     payload: { phase: moment.phase },
+  };
+  return getLiveFeed().publish(liveTopicOf(builderSlug), live);
+};
+
+/**
+ * Announce a builder's restyled overlay on their channel — the publish half of the
+ * overlay style, twin of {@link announceEffectFired}. The frame carries the style
+ * WHOLE (presence's shape: each frame is again the full truth, so a missed one leaves
+ * a watcher a beat stale, never accumulating drift), but the authority stays the
+ * overlay store — the watch surface re-reads it on every subscription (re)open, and
+ * this frame only spares a watcher already attached the wait for a reload
+ * [LAW:one-source-of-truth]. Called only AFTER the store holds the style, by the one
+ * authoring path, so a watcher is never nudged with a look that was refused.
+ */
+export const announceOverlayStyle = (builderSlug: string, style: OverlayStyle): Promise<void> => {
+  const live: LiveEvent = {
+    type: OVERLAY_STYLE,
+    at: clock.now(),
+    payload: { placement: style.placement, accentHue: style.accentHue, durationSeconds: style.durationSeconds },
   };
   return getLiveFeed().publish(liveTopicOf(builderSlug), live);
 };

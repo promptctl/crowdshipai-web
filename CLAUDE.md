@@ -319,6 +319,12 @@ transport drop is a represented `reconnecting` state driven by the room's own ev
 builder can record their session to a real local file while live, and both go-live and
 end flip every watcher's badge the moment they happen over the live-event spine — with
 a closing tab ending its stream honestly via a beacon instead of lingering "live".
+The overlay is now real and the builder's own (evf.5): a bought menu effect lands ON
+the stream as a toast carrying the builder's words, in a style — corner, hue, residency
+— the builder authors from the studio with a test-fire preview that IS the watch
+renderer; the style persists behind an OverlayStore seam, rides the live spine whole,
+and re-reads its authoritative store on every reconnect, so a mid-stream restyle
+reaches every watcher without a reload.
 **Known gap:** contested-after-met — reversing an already-met obligation —
 remains engine-only (e5a.9, waiting on the dispute window). This document is the
 source of truth for *intent*; build toward it, and update it when intent changes —

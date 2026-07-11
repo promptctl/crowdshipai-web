@@ -1,3 +1,6 @@
+import { offerDisplayIn, type OfferDisplay } from './offer-display';
+import { overlayStyleFrom, type OverlayStyle } from './overlay-style';
+
 /**
  * The watch surface's side of the live event channel: the wire labels the stream
  * publishes under, and the parses of an SSE frame into the things this client build
@@ -73,14 +76,32 @@ export const SETTLEMENT_EVENT = 'settlement';
 export const STREAM_LIFECYCLE_EVENT = 'stream-lifecycle';
 
 /**
+ * The open event-type label a builder's overlay restyle carries on the wire — the
+ * overlay joining the same spine as effects, chat, presence, settlement, and
+ * lifecycle, one more value through the one `LiveFeed`, never a second real-time
+ * channel [LAW:no-mode-explosion]. Minted into a `LiveEventType` by the publish edge
+ * from this very string, so publish and consume cannot drift apart
+ * [LAW:one-source-of-truth]. The frame carries the authored style WHOLE (presence's
+ * shape: each frame is again the full truth, so a missed one leaves a watcher a beat
+ * stale, never accumulating drift) — but the style's authority is the overlay store
+ * the watch surface re-reads on every subscription (re)open, never this feed
+ * [LAW:one-source-of-truth].
+ */
+export const OVERLAY_STYLE_EVENT = 'overlay-style';
+
+/**
  * A fired effect as the watch surface renders it: the open effect kind the builder
  * authored (`shoutout`, `poll-vote`, `bounty-pool`, …), carried as data and shown
  * verbatim, never branched on [LAW:dataflow-not-control-flow]. `effectKind` is the
- * always-present, type-honest field of the live payload; the richer `params` stay
- * on the wire for a future overlay to read, but the chat line needs only the kind.
+ * always-present, type-honest field of the live payload. `display` is the builder's
+ * own words for the offer, read from the wire's open `params` when they carry the
+ * CrowdShip display shape — honest optionality, not a guard: an effect fired from a
+ * foreign params shape is still a fired effect, it just brings no display text and
+ * the overlay shows its kind instead [LAW:dataflow-not-control-flow].
  */
 export interface FiredEffect {
   readonly effectKind: string;
+  readonly display?: OfferDisplay;
 }
 
 /**
@@ -179,7 +200,11 @@ export function parseFiredEffect(raw: string): FiredEffect | null {
   const kind = frame.payload.effectKind;
   if (typeof kind !== 'string' || kind.length === 0) return null;
 
-  return { effectKind: kind };
+  // The builder's words, when the open params carry the CrowdShip display shape —
+  // judged by the one reader that owns that shape [LAW:single-enforcer]. A foreign
+  // shape is an effect with no display text, not a rejected frame.
+  const display = offerDisplayIn(frame.payload.params);
+  return display === null ? { effectKind: kind } : { effectKind: kind, display };
 }
 
 /**
@@ -288,4 +313,20 @@ export function parseStreamLifecycle(raw: string): StreamLifecycleMoment | null 
   if (phase !== 'live' && phase !== 'ended') return null;
 
   return { phase };
+}
+
+/**
+ * Parse one raw SSE `data:` frame into the builder's restyled {@link OverlayStyle},
+ * or `null` when the frame is not one — the sibling of the parsers above, reading the
+ * same wire trust boundary the same way. The payload's legality is judged by the ONE
+ * style validator every boundary shares — the same line the authoring edge and the
+ * durable store draw — so the wire cannot admit a style the app would refuse to
+ * author [LAW:single-enforcer]. A frame of another type or an out-of-bounds style
+ * resolves to `null`: not this build's overlay style, never a swallowed error
+ * [LAW:no-silent-failure].
+ */
+export function parseOverlayStyle(raw: string): OverlayStyle | null {
+  const frame = decodeFrame(raw);
+  if (frame === null || frame.type !== OVERLAY_STYLE_EVENT) return null;
+  return overlayStyleFrom(frame.payload);
 }

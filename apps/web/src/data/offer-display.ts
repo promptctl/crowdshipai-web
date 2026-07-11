@@ -35,15 +35,31 @@ export const offerParams = (display: OfferDisplay): JsonValue => ({
  * stance the durable channel rebuild takes: a malformed record halts rather than
  * coercing.
  */
-/** A JSON object (not an array, not a scalar). The predicate is the single place the
- *  "params is a keyed record" narrowing is asserted, so the reader below stays free of
- *  casts [LAW:single-enforcer]. */
-const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
+/** A keyed record (not an array, not a scalar, not null). The predicate is the single
+ *  place the "params is a keyed record" narrowing is asserted, so the readers below
+ *  stay free of casts [LAW:single-enforcer]. Over `unknown` rather than `JsonValue`
+ *  because the wire-side reader receives bytes that have not yet been proven JSON of
+ *  our shape — the same check serves both. */
+const isKeyedRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/**
+ * Read the display text out of an unproven params value, or `null` when it does not
+ * carry the CrowdShip `{label, summary}` shape — the TRUST-BOUNDARY face of this
+ * module, for readers of the live wire where a foreign params shape is honest
+ * optionality (an effect authored elsewhere still fired; it just brings no display
+ * text), never corruption [LAW:no-silent-failure]. The shape knowledge lives only
+ * here, beside {@link offerParams} which writes it [LAW:one-source-of-truth].
+ */
+export const offerDisplayIn = (params: unknown): OfferDisplay | null =>
+  isKeyedRecord(params) && typeof params.label === 'string' && typeof params.summary === 'string'
+    ? { label: params.label, summary: params.summary }
+    : null;
+
 export const offerDisplayOf = (params: JsonValue): OfferDisplay => {
-  if (isJsonObject(params) && typeof params.label === 'string' && typeof params.summary === 'string') {
-    return { label: params.label, summary: params.summary };
+  const display = offerDisplayIn(params);
+  if (display === null) {
+    throw new Error(`offer params are not a CrowdShip display payload: ${JSON.stringify(params)}`);
   }
-  throw new Error(`offer params are not a CrowdShip display payload: ${JSON.stringify(params)}`);
+  return display;
 };
