@@ -81,12 +81,16 @@ const claimChannel = async (page: Page, handle: string, displayName: string): Pr
 };
 
 // The pool's arithmetic, stated once: a 200-coin target under the demo 10% cut splits
-// into 180 to the builder and 20 to the platform. The assertions below read these
-// figures off the SCREEN — what the audience sees must be exactly what the ledger
-// recorded [LAW:one-source-of-truth].
+// into 180 to the builder and 20 to the platform. The tipping pledge deliberately
+// OVERSHOOTS — 100 + 500 pooled against 200 — so the 400-coin excess must return to the
+// backer inside the same settlement (crowdshipai-settlement-e5a.8): the builder is paid
+// the target's split, never the windfall. The assertions below read these figures off
+// the SCREEN — what the audience sees must be exactly what the ledger recorded
+// [LAW:one-source-of-truth].
 const TARGET = '200';
 const RELEASED = '180';
 const CUT = '20';
+const OVERSHOOT = '400';
 
 test('the settlement feed moves in view of the stream: a passive viewer watches a pool fill, ship, and the cut skimmed', async ({
   browser,
@@ -123,8 +127,7 @@ test('the settlement feed moves in view of the stream: a passive viewer watches 
     await backer.getByRole('button', { name: '+2,000' }).click();
     await expect(backer.getByText(/◎\s*2,000/).first()).toBeVisible({ timeout: 15_000 });
 
-    const pledge = backer.getByRole('button', { name: '+100', exact: true });
-    await pledge.click();
+    await backer.getByRole('button', { name: `Pledge 100 to ${title}` }).click();
     await expect(backer.getByText(`Pledged — ◎ 100 / ${TARGET} pooled.`)).toBeVisible({ timeout: 15_000 });
 
     // The first pledge already moves in view of the stream: the passive viewer's
@@ -133,11 +136,16 @@ test('the settlement feed moves in view of the stream: a passive viewer watches 
     await expect(viewer.getByText(/pooled by/)).toBeVisible({ timeout: 15_000 });
     await expect(viewer.getByText(/viewer-\w+/).first()).toBeVisible({ timeout: 15_000 });
 
-    // (4) The tipping pledge ships the pool: released to the builder, cut skimmed.
-    await pledge.click();
+    // (4) The tipping pledge OVERSHOOTS the pool past its target: released to the
+    // builder at the target's split, cut skimmed, and the excess straight back to the
+    // backer — one atomic settlement.
+    await backer.getByRole('button', { name: `Pledge 500 to ${title}` }).click();
     await expect(backer.getByText('Pool hit its target — auto-released to the builder!')).toBeVisible({
       timeout: 15_000,
     });
+    // The excess is back the instant the pool ships: 2,000 − 100 − 500 + 400 = 1,800 —
+    // the wallet re-read from the ledger, never a client tally.
+    await expect(backer.getByText(/◎\s*1,800/).first()).toBeVisible({ timeout: 15_000 });
 
     // Every watcher sees the same broadcast SHIPPED line — the released figure and the
     // cut in plain view — and the settlement timeline's release and cut entries. The
@@ -151,6 +159,10 @@ test('the settlement feed moves in view of the stream: a passive viewer watches 
       await expect(page.getByText(`− ◎ ${RELEASED}`)).toBeVisible({ timeout: 15_000 });
       await expect(page.getByText(`− ◎ ${CUT}`)).toBeVisible({ timeout: 15_000 });
       await expect(page.getByText(/platform cut to CrowdShip/)).toBeVisible({ timeout: 15_000 });
+      // The overshoot's return, in the same timeline as the release it rode with: the
+      // 400-coin excess back to the backer, in view of everyone (e5a.8).
+      await expect(page.getByText(`− ◎ ${OVERSHOOT}`)).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText(/refunded to/)).toBeVisible({ timeout: 15_000 });
       // Two SHIPPED markers, for everyone: the pool card's badge AND the broadcast
       // chat line — the tipper and the passive viewer read the same two.
       await expect(page.getByText('SHIPPED', { exact: true })).toHaveCount(2, { timeout: 15_000 });
@@ -165,6 +177,7 @@ test('the settlement feed moves in view of the stream: a passive viewer watches 
     // ledger's recorded history — the projection survives reconnects by construction.
     await viewer.reload();
     await expect(viewer.getByText(`− ◎ ${RELEASED}`)).toBeVisible({ timeout: 15_000 });
+    await expect(viewer.getByText(`− ◎ ${OVERSHOOT}`)).toBeVisible({ timeout: 15_000 });
     await expect(viewer.getByText(/platform cut to CrowdShip/)).toBeVisible({ timeout: 15_000 });
     await expect(viewer.getByText(/pooled by/).first()).toBeVisible({ timeout: 15_000 });
     // Exactly one SHIPPED now: the durable pool badge. The chat line was the live
@@ -216,7 +229,7 @@ test('crowdshipai-settlement-e5a.11: a cancelled pool refunds its backers in vie
     await backer.goto(`/watch/${handle}`);
     await backer.getByRole('button', { name: '+2,000' }).click();
     await expect(backer.getByText(/◎\s*2,000/).first()).toBeVisible({ timeout: 15_000 });
-    await backer.getByRole('button', { name: `+${PLEDGED}`, exact: true }).click();
+    await backer.getByRole('button', { name: `Pledge ${PLEDGED} to ${title}` }).click();
     await expect(backer.getByText(`Pledged — ◎ ${PLEDGED} / ${REFUND_TARGET} pooled.`)).toBeVisible({
       timeout: 15_000,
     });
@@ -257,7 +270,7 @@ test('crowdshipai-settlement-e5a.11: a cancelled pool refunds its backers in vie
     await expect(viewer.getByText(`− ◎ ${PLEDGED}`)).toBeVisible({ timeout: 15_000 });
     await expect(viewer.getByText(/refunded to/)).toBeVisible({ timeout: 15_000 });
     await expect(viewer.getByText('CANCELLED', { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(viewer.getByRole('button', { name: `+${PLEDGED}`, exact: true })).toHaveCount(0);
+    await expect(viewer.getByRole('button', { name: `Pledge ${PLEDGED} to ${title}` })).toHaveCount(0);
     await viewer.screenshot({ path: 'test-results/settlement-evidence/viewer-after-refund-reload.png', fullPage: true });
   } finally {
     await builderCtx.close();

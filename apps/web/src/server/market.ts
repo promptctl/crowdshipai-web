@@ -146,8 +146,9 @@ interface Market {
   readonly mint: AccountId;
   /** The funding side of pooled obligations: a backer adds coins to a pool's escrow. */
   readonly poolFunder: PoolFunder;
-  /** The settle side: the instant a pool's target is reached, drain the escrow to the builder
-   *  and skim the cut. The single authority on met-ness — the surface only offers the pool. */
+  /** The settle side: the instant a pool's target is reached, drain the escrow — the target's
+   *  split to the builder with the cut skimmed, any overshoot back to the backers pro-rata,
+   *  one movement. The single authority on met-ness — the surface only offers the pool. */
   readonly releaseEngine: ReleaseEngine;
   /** The settle-BACK side: return an unmet or cancelled escrow to the backers who funded it,
    *  each their net recorded contribution — the failure mode built like the success path. WHO
@@ -180,6 +181,7 @@ const build = (): Market => {
     poolFunder: createPoolFunder(ledger),
     releaseEngine: createReleaseEngine({
       ledger,
+      query: ledger,
       facts: poolNeverUsesFacts,
       platformAccount,
       cut: tenPercentCut,

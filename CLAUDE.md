@@ -306,10 +306,14 @@ backer pledges toward it on the watch page, the pool auto-releases to the builde
 the instant its target is met — and every viewer of the channel watches it happen
 live: the SHIPPED broadcast with the released figure and the platform cut in plain
 view, plus a settlement timeline projected from the ledger's own recorded history
-(so it survives reloads and reconnects by construction). **Known gap:** the refund
-path — an unmet or cancelled pool returning backers' stakes — is built and even
-renders if it ever moves money, but no surface can yet *cause* a refund (e5a.11);
-overshoot and contested-after-met refinements likewise remain engine-only. This document is the
+(so it survives reloads and reconnects by construction). The failure mode is just as
+exercisable: a builder cancels a pool from the studio and every watcher sees the
+REFUNDED broadcast, the timeline's refund legs, and the CANCELLED card (e5a.11). A
+pool funded *past* its target no longer hands the builder the windfall: the release
+caps at the target and the excess returns to the backers pro-rata inside the same
+atomic settlement, visible in the timeline and back in wallets the instant it ships
+(e5a.8). **Known gap:** contested-after-met — reversing an already-met obligation —
+remains engine-only (e5a.9, waiting on the dispute window). This document is the
 source of truth for *intent*; build toward it, and update it when intent changes —
 never let it drift from what we're actually building.
 

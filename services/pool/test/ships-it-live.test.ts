@@ -63,6 +63,7 @@ describe('many backers, one target, one builder — the pool ships it live', () 
     // The product surface hands the funded pool to the release engine — fund here, release there.
     const engine = createReleaseEngine({
       ledger: world.ledger,
+      query: world.ledger,
       facts: poolNeverUsesFacts,
       platformAccount: PLATFORM,
       cut: tenPercentCut,
@@ -99,6 +100,7 @@ describe('many backers, one target, one builder — the pool ships it live', () 
 
     const engine = createReleaseEngine({
       ledger: world.ledger,
+      query: world.ledger,
       facts: poolNeverUsesFacts,
       platformAccount: PLATFORM,
       cut: tenPercentCut,

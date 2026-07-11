@@ -54,6 +54,7 @@ describe('the release happens in view of the stream', () => {
 
     const engine = createReleaseEngine({
       ledger: world.ledger,
+      query: world.ledger,
       facts: poolNeverUsesFacts,
       platformAccount: PLATFORM,
       cut: tenPercentCut,
@@ -97,6 +98,52 @@ describe('the release happens in view of the stream', () => {
     expect(feed).toEqual([
       { kind: 'contribution', party: 'backer-ami', amount: 20n, pooledAfter: 20n, reason: 'pool-contribution', at: AT_MS },
     ]);
+  });
+
+  it('shows the overshoot returning to the backers alongside the release and the cut', async () => {
+    const pool = ffmpegPool(60n);
+    const world = await fundedWorld(
+      [
+        { id: 'ami', funds: 80n },
+        { id: 'ben', funds: 50n },
+      ],
+      pool,
+    );
+
+    // Ninety pooled against a sixty-coin target: the pool overshoots by thirty.
+    await world.contribute('ami', 60n, 'c-ami');
+    await world.contribute('ben', 30n, 'c-ben');
+
+    const engine = createReleaseEngine({
+      ledger: world.ledger,
+      query: world.ledger,
+      facts: poolNeverUsesFacts,
+      platformAccount: PLATFORM,
+      cut: tenPercentCut,
+      reason: reason('pool-release'),
+      rail: createCustodialRail(world.ledger),
+    });
+    const released = await engine.tryRelease(asEscrowedPledge(pool, AT));
+    expect(released.kind).toBe('released');
+
+    const roles: SettlementRoles = { escrow: POOL_ESCROW, builder: BUILDER, platform: PLATFORM };
+    const feed = (await settlementFeed(world.ledger, roles)).map(plain);
+
+    // One settlement, the whole story: the builder paid the TARGET's split, the cut skimmed,
+    // and the thirty-coin overshoot back to the backers pro-rata (20 to ami's 60, 10 to ben's
+    // 30) — the excess never ships to the builder as a windfall, and the audience sees it
+    // return in the same feed that shows the release.
+    const settlement = feed.slice(2);
+    expect(settlement).toContainEqual({ kind: 'release', party: 'builder', amount: 54n, pooledAfter: 36n, reason: 'pool-release', at: AT_MS });
+    expect(settlement).toContainEqual({ kind: 'cut', party: 'platform-revenue', amount: 6n, pooledAfter: 30n, reason: 'pool-release', at: AT_MS });
+    expect(settlement).toContainEqual({ kind: 'refund', party: 'backer-ami', amount: 20n, pooledAfter: 10n, reason: 'pool-release', at: AT_MS });
+    expect(settlement).toContainEqual({ kind: 'refund', party: 'backer-ben', amount: 10n, pooledAfter: 0n, reason: 'pool-release', at: AT_MS });
+    expect(settlement).toHaveLength(4);
+
+    // Nothing invented: everything that left escrow equals the ninety that filled it.
+    const inflow = feed.filter((e) => e.kind === 'contribution').reduce((sum, e) => sum + e.amount, 0n);
+    const outflow = settlement.reduce((sum, e) => sum + e.amount, 0n);
+    expect(outflow).toBe(inflow);
   });
 });
 

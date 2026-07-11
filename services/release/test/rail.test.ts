@@ -1,4 +1,4 @@
-import type { Ledger, MovementCommit } from '@crowdship/ledger';
+import type { Ledger, LedgerQuery, MovementCommit } from '@crowdship/ledger';
 import { idempotencyKey, transactionReason, type TransactionReason } from '@crowdship/ledger-kernel';
 import { describe, expect, it } from 'vitest';
 
@@ -27,9 +27,10 @@ import {
 
 const RELEASE_REASON: TransactionReason = must(transactionReason('obligation-release'));
 
-const engineOn = (ledger: Ledger, rail: SettlementRail): ReleaseEngine =>
+const engineOn = (ledger: Ledger & LedgerQuery, rail: SettlementRail): ReleaseEngine =>
   createReleaseEngine({
     ledger,
+    query: ledger,
     facts: facts({}),
     platformAccount: PLATFORM,
     cut: tenPercentCut,

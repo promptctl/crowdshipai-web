@@ -1,4 +1,4 @@
-import { createInMemoryLedger, type Ledger } from '@crowdship/ledger';
+import { createInMemoryLedger, type Ledger, type LedgerQuery } from '@crowdship/ledger';
 import {
   accountId,
   coinAmount,
@@ -64,7 +64,7 @@ export interface Backer {
 }
 
 export interface FundedWorld {
-  readonly ledger: Ledger;
+  readonly ledger: Ledger & LedgerQuery;
   /** The wallet account of a backer set up in this world. */
   readonly wallet: (id: string) => AccountId;
 }

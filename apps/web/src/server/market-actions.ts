@@ -264,8 +264,10 @@ export async function openPool(title: string, targetCoins: number): Promise<Pool
  * A genuine refund is announced ONCE — only the fresh `refunded` arm carries the
  * REFUNDED broadcast, never the idempotent `already-refunded` replay — with the total
  * read back from the ledger's own recorded refund legs, never re-derived
- * [LAW:one-source-of-truth]. A pool refunds at most once, so every refund leg in its
- * feed belongs to this one settlement.
+ * [LAW:one-source-of-truth]. Every refund leg in a cancelled pool's feed belongs to
+ * this one settlement: the OTHER source of refund legs — a release returning a pool's
+ * overshoot — can only exist in a released pool, and a released pool never reaches
+ * this cancel path.
  */
 export async function cancelPool(poolId: string): Promise<PoolCancelResult> {
   const principal = await currentPrincipal();

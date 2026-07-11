@@ -133,6 +133,18 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.21)(lightningcss@1.32.0)
 
+  packages/escrow-shares:
+    dependencies:
+      '@crowdship/ledger':
+        specifier: workspace:*
+        version: link:../ledger
+      '@crowdship/ledger-kernel':
+        specifier: workspace:*
+        version: link:../ledger-kernel
+      '@crowdship/std':
+        specifier: workspace:*
+        version: link:../std
+
   packages/identity:
     dependencies:
       '@crowdship/std':
@@ -324,6 +336,9 @@ importers:
 
   services/refund:
     dependencies:
+      '@crowdship/escrow-shares':
+        specifier: workspace:*
+        version: link:../../packages/escrow-shares
       '@crowdship/ledger':
         specifier: workspace:*
         version: link:../../packages/ledger
@@ -346,6 +361,9 @@ importers:
 
   services/release:
     dependencies:
+      '@crowdship/escrow-shares':
+        specifier: workspace:*
+        version: link:../../packages/escrow-shares
       '@crowdship/ledger':
         specifier: workspace:*
         version: link:../../packages/ledger

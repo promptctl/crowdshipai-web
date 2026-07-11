@@ -1,4 +1,4 @@
-import type { Ledger, PostError, PostReceipt } from '@crowdship/ledger';
+import type { Ledger, LedgerQuery, PostError, PostReceipt } from '@crowdship/ledger';
 import type {
   AccountId,
   Timestamp as LedgerTimestamp,
@@ -7,6 +7,7 @@ import type {
   TransferError,
 } from '@crowdship/ledger-kernel';
 import { transfer } from '@crowdship/ledger-kernel';
+import { netContributions, proRataShares, returnLegs } from '@crowdship/escrow-shares';
 import type {
   Condition,
   DeliverableId,
@@ -27,13 +28,15 @@ import { coinAmount, timestamp } from '@crowdship/std';
  * accounts at its boundary. A pledge whose terms satisfy this shape can be released;
  * the rest of a builder's terms (themes, copy, whatever) ride alongside untouched.
  *
- *  - `escrowAccount` — where the coins are held until release. Its BALANCE is the gross
- *    that releases: the engine drains exactly what the ledger says is held, never a
- *    notional pledged amount that could disagree with reality [LAW:one-source-of-truth].
- *    For a pool-target condition that same balance is the pooled total judged against the
- *    target, so a builder takes the whole pool and many backers funding one escrow needs
- *    no new release path — the pool's identity is positional (this account), not a second
- *    field [LAW:locality-or-seam].
+ *  - `escrowAccount` — where the coins are held until release. The settling movement drains
+ *    exactly what the ledger says is held, never a notional pledged amount that could
+ *    disagree with reality [LAW:one-source-of-truth]. For a pool-target condition that same
+ *    balance is the pooled total judged against the target, so many backers funding one
+ *    escrow needs no new release path — the pool's identity is positional (this account),
+ *    not a second field [LAW:locality-or-seam]. What the builder is OWED of it is the
+ *    condition's own bound: a pool releases its target — the sum its backers were promised
+ *    would ship the feature — and any coins pooled beyond it return to the backers pro-rata
+ *    inside the same movement, never shipped to the builder as a windfall.
  *  - `builderAccount` — who is paid on release (their share after the cut).
  *  - `condition` — the criterion, stored as data, that the engine observes and judges.
  */
@@ -86,8 +89,9 @@ export interface ObligationFacts {
  * obligation settle, and if not, why?
  *
  *  - `released` — the condition was met on THIS call, coins moved (escrow → builder +
- *    escrow → platform), and the pledge advanced to its terminal `released` phase, all as
- *    one unit. Carries the settled pledge and the ledger receipt proving the money moved.
+ *    escrow → platform, plus escrow → each backer's slice of any overshoot beyond a pool's
+ *    target), and the pledge advanced to its terminal `released` phase, all as one unit.
+ *    Carries the settled pledge and the ledger receipt proving the money moved.
  *  - `already-released` — this pledge had already settled on a prior call; the verdict is
  *    replayed from the rail's record of the settling movement (no second observation, no
  *    second movement). It carries the reconstructed terminal pledge and the `transactionId`
@@ -134,6 +138,11 @@ export interface ReleaseEngineDeps {
    *  condition against [LAW:single-enforcer]. The engine reads through this seam and
    *  *settles* through the rail; it never posts the release movement directly. */
   readonly ledger: Ledger;
+  /** The ledger's read/audit seam: the escrow's recorded history, whose credit legs ARE the
+   *  contributor ledger an overshoot returns along, pro-rata — the same single source of
+   *  truth the refund engine reads, never a backer list kept anywhere else
+   *  [LAW:one-source-of-truth]. */
+  readonly query: LedgerQuery;
   /** The source of the non-coin facts a deliverable or goal condition is judged by. */
   readonly facts: ObligationFacts;
   /** The account the platform's cut is paid into. One account for the engine, not a
@@ -226,10 +235,17 @@ class KeyedSerializer {
  *  2. Otherwise observe the condition against the coins held in escrow; if not met, return
  *     `pending` and touch nothing.
  *  3. If met, settle exactly the escrow balance — the ledger is the one truth of what is
- *     held [LAW:one-source-of-truth] — splitting it into the builder's share and the
- *     platform's cut. The rail moves the coins and commits the settlement as one unit; the
- *     release then advances the pledge (pure, infallible) to its terminal phase at the
- *     instant the money moved.
+ *     held [LAW:one-source-of-truth]. The builder's gross is what the condition promised
+ *     them: a pool's target (its backers funded a feature at a price, not a windfall), or
+ *     the whole balance for a deliverable/goal obligation, whose condition names no sum.
+ *     The gross splits into the builder's share and the platform's cut; whatever is held
+ *     BEYOND the gross — a pool funded past its target — returns to the backers pro-rata by
+ *     their recorded contributions, as further legs of the SAME movement. One atomic
+ *     settlement, so there is no ordering between "refund the excess" and "pay the builder"
+ *     to own, and no window where one has happened without the other
+ *     [LAW:no-ambient-temporal-coupling]. The rail moves the coins and commits the
+ *     settlement as one unit; the release then advances the pledge (pure, infallible) to
+ *     its terminal phase at the instant the money moved.
  *
  * The settlement is keyed by the pledge id, so the rail moves the coins at most once no
  * matter how often this runs. But "coins move once" is not the whole contract: the
@@ -242,7 +258,7 @@ class KeyedSerializer {
  * [LAW:no-silent-failure].
  */
 export const createReleaseEngine = (deps: ReleaseEngineDeps): ReleaseEngine => {
-  const { ledger, facts, platformAccount, cut, reason, rail } = deps;
+  const { ledger, query, facts, platformAccount, cut, reason, rail } = deps;
   const serializer = new KeyedSerializer();
 
   // Pair the condition with its one live reading into the single Observation value `isMet`
@@ -281,18 +297,37 @@ export const createReleaseEngine = (deps: ReleaseEngineDeps): ReleaseEngine => {
     const observation = await observe(condition, held);
     if (!isMet(observation)) return { kind: 'pending', observation };
 
-    // The gross is what the ledger actually holds, not the pledge's notional amount — a met
-    // obligation over an empty escrow has nothing to release, surfaced rather than skipped.
-    const gross = coinAmount(held);
+    // The builder's gross is the condition's own bound, read from the very observation that
+    // judged met-ness so the promise and the payment are one snapshot [LAW:one-source-of-truth]:
+    // a met pool releases its TARGET — the sum its backers funded the feature at — while a
+    // deliverable/goal condition names no sum, so its gross is everything held (and a met one
+    // over an empty escrow has nothing to release, surfaced rather than skipped).
+    const owedBuilder = observation.kind === 'pool-target-reached' ? (observation.target as bigint) : held;
+    const gross = coinAmount(owedBuilder);
     if (!gross.ok) return { kind: 'nothing-to-settle', escrowAccount };
 
     const split = cut(gross.value);
     conserve(split, gross.value);
 
-    // The balanced release movement: the builder's share and the platform's cut both leave
-    // escrow, draining exactly what was held. `transfer` is the single constructor that
-    // rejects a same-account leg, so a misrouted obligation is a typed outcome, not a
-    // movement the ledger must defend.
+    // Whatever is held beyond the gross — a pool funded past its target — returns to the
+    // backers pro-rata by their recorded contributions, read from the escrow's own history:
+    // the same contributor ledger a refund reads, never a list kept here
+    // [LAW:one-source-of-truth]. The excess is a value this same path always carries; at zero
+    // it forms no legs, so an exactly-met obligation runs the identical flow with nothing
+    // extra [LAW:dataflow-not-control-flow]. The distribution conserves the excess exactly
+    // (its own contract), so gross + overshoot legs drain precisely what was held.
+    const excess = held - owedBuilder;
+    const overshoot = returnLegs(
+      escrowAccount,
+      proRataShares(netContributions(await query.historyOf(escrowAccount)), excess),
+    );
+
+    // The balanced release movement: the builder's share, the platform's cut, and any
+    // overshoot returns all leave escrow as ONE atomic unit, draining exactly what was held —
+    // no ordering between "refund the excess" and "pay the builder" for anything to own
+    // [LAW:no-ambient-temporal-coupling]. `transfer` is the single constructor that rejects a
+    // same-account leg, so a misrouted obligation is a typed outcome, not a movement the
+    // ledger must defend.
     const toBuilder = transfer(escrowAccount, builderAccount, split.builderShare);
     if (!toBuilder.ok) return { kind: 'invalid-routing', error: toBuilder.error };
     const toPlatform = transfer(escrowAccount, platformAccount, split.platformCut);
@@ -301,7 +336,7 @@ export const createReleaseEngine = (deps: ReleaseEngineDeps): ReleaseEngine => {
     const settled = await rail.settle({
       purpose: 'release',
       pledge: pledge.id,
-      transfers: [toBuilder.value, toPlatform.value],
+      transfers: [toBuilder.value, toPlatform.value, ...overshoot],
       reason,
     });
     if (!settled.ok) return { kind: 'release-refused', error: settled.error };

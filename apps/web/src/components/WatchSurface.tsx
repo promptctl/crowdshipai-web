@@ -567,6 +567,9 @@ function PoolCard({
             <button
               key={amount}
               type="button"
+              // Named for the pool it pledges into: the visible "+500" alone is ambiguous —
+              // the wallet's top-up packs share it — for assistive tech and automation alike.
+              aria-label={`Pledge ${amount} to ${pool.title}`}
               disabled={busy || balance < amount}
               onClick={() => onPledge(pool.id, amount)}
               className="flex-1 rounded-sm border border-edge bg-surface px-1.5 py-1 text-[11px] font-semibold text-chalk transition-colors hover:border-accent-dim hover:text-accent disabled:cursor-not-allowed disabled:text-fog"

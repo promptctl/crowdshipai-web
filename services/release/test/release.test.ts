@@ -1,9 +1,11 @@
-import type { Ledger } from '@crowdship/ledger';
 import { describe, expect, it } from 'vitest';
+
+import { createCustodialRail } from '@crowdship/settlement-rail';
 
 import type { CutPolicy } from '../src/index.js';
 import {
   AT,
+  backerWallet,
   BUILDER,
   coins,
   deliverableAccepted,
@@ -12,6 +14,7 @@ import {
   escrowedPledge,
   facts,
   goalResolved,
+  ledgerFundedBy,
   ledgerMissingBuilder,
   ledgerWithEscrow,
   must,
@@ -215,7 +218,7 @@ describe('a release that cannot be performed is surfaced loudly, never silent', 
 
 describe('the platform cut is a knob, not a hardcoded rate', () => {
   it('splits the gross by whatever cut policy is supplied', async () => {
-    const ledger: Ledger = await ledgerWithEscrow(500n);
+    const ledger = await ledgerWithEscrow(500n);
     const twentyPercent: CutPolicy = (gross) => ({
       platformCut: coins(gross / 5n),
       builderShare: coins(gross - gross / 5n),
@@ -227,5 +230,94 @@ describe('the platform cut is a knob, not a hardcoded rate', () => {
     expect(outcome.kind).toBe('released');
     expect(await ledger.balanceOf(BUILDER)).toBe(400n);
     expect(await ledger.balanceOf(PLATFORM)).toBe(100n);
+  });
+});
+
+describe('a pool funded past its target returns the overshoot to the backers, in the same movement', () => {
+  // Backers 300 + 250 + 150 = 700 pooled against a 500 target: the builder is owed the
+  // target's split (450/50), and the 200 excess returns pro-rata — floors 85/71/42, the two
+  // leftover coins to the largest discarded fractions (cy then ami).
+  const overshotPool = () =>
+    ledgerFundedBy([
+      { id: 'ami', funds: 300n },
+      { id: 'bo', funds: 250n },
+      { id: 'cy', funds: 150n },
+    ]);
+
+  it('pays the builder the target’s split and each backer their pro-rata slice of the excess', async () => {
+    const ledger = await overshotPool();
+    const engine = engineOver(ledger, facts({}));
+
+    const outcome = await engine.tryRelease(escrowedPledge('pl-pool', 500n, poolTarget(500n)));
+
+    expect(outcome.kind).toBe('released');
+    if (outcome.kind !== 'released') throw new Error('unreachable');
+    // The builder gets the split of the TARGET — the sum the backers funded the feature at —
+    // never the windfall of the whole overshot escrow.
+    expect(await ledger.balanceOf(BUILDER)).toBe(450n);
+    expect(await ledger.balanceOf(PLATFORM)).toBe(50n);
+    expect(await ledger.balanceOf(backerWallet('ami'))).toBe(86n);
+    expect(await ledger.balanceOf(backerWallet('bo'))).toBe(71n);
+    expect(await ledger.balanceOf(backerWallet('cy'))).toBe(43n);
+    // Conservation: 450 + 50 + 86 + 71 + 43 drains the 700 exactly.
+    expect(await ledger.balanceOf(ESCROW)).toBe(0n);
+  });
+
+  it('settles as ONE atomic movement: the single receipt carries every party it touched', async () => {
+    const ledger = await overshotPool();
+    const engine = engineOver(ledger, facts({}));
+
+    const outcome = await engine.tryRelease(escrowedPledge('pl-pool', 500n, poolTarget(500n)));
+
+    if (outcome.kind !== 'released') throw new Error(`expected released, got ${outcome.kind}`);
+    // One PostReceipt is one recorded movement; naming the builder, the platform, AND the
+    // backers proves the overshoot return and the release cannot come apart — there is no
+    // ordering between them for a crash to land inside.
+    expect([...outcome.receipt.balances.keys()].sort()).toEqual(
+      [ESCROW, BUILDER, PLATFORM, backerWallet('ami'), backerWallet('bo'), backerWallet('cy')].sort(),
+    );
+  });
+
+  it('leaves the refund settlement key unspent — a later cancel-refund can never collide', async () => {
+    const ledger = await overshotPool();
+    const rail = createCustodialRail(ledger);
+    const engine = engineOver(ledger, facts({}));
+    const pledge = escrowedPledge('pl-pool', 500n, poolTarget(500n));
+
+    await engine.tryRelease(pledge);
+
+    // The overshoot returned inside the RELEASE movement, not as a refund settlement: the
+    // pledge's one refund key is still free for the terminal refund path.
+    expect(await rail.settlementOf('release', pledge.id)).toBeDefined();
+    expect(await rail.settlementOf('refund', pledge.id)).toBeUndefined();
+  });
+
+  it('replays idempotently: a retry reports already-released and moves nothing more', async () => {
+    const ledger = await overshotPool();
+    const engine = engineOver(ledger, facts({}));
+    const pledge = escrowedPledge('pl-pool', 500n, poolTarget(500n));
+
+    const first = await engine.tryRelease(pledge);
+    const second = await engine.tryRelease(pledge);
+
+    expect(first.kind).toBe('released');
+    expect(second.kind).toBe('already-released');
+    expect(await ledger.balanceOf(backerWallet('ami'))).toBe(86n);
+    expect(await ledger.balanceOf(BUILDER)).toBe(450n);
+  });
+
+  it('an exactly-met pool forms no overshoot legs — the two-leg split it always was', async () => {
+    const ledger = await ledgerFundedBy([
+      { id: 'ami', funds: 300n },
+      { id: 'bo', funds: 200n },
+    ]);
+    const engine = engineOver(ledger, facts({}));
+
+    const outcome = await engine.tryRelease(escrowedPledge('pl-pool', 500n, poolTarget(500n)));
+
+    if (outcome.kind !== 'released') throw new Error(`expected released, got ${outcome.kind}`);
+    expect([...outcome.receipt.balances.keys()].sort()).toEqual([ESCROW, BUILDER, PLATFORM].sort());
+    expect(await ledger.balanceOf(backerWallet('ami'))).toBe(0n);
+    expect(await ledger.balanceOf(backerWallet('bo'))).toBe(0n);
   });
 });

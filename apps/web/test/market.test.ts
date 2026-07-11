@@ -124,6 +124,27 @@ describe('pooled obligations that pay themselves out, end to end through the mar
     expect(await coinBalanceOf(cleo)).toBe(80n);
   });
 
+  it('returns the overshoot to the backers when the tipping pledge sails past the target', async () => {
+    const pool = await openFeaturePool('pool-overshoot', 'rewrite the mixer in rust', 60n);
+    const ami = await fundedBacker('pool-over-ami', 100n);
+    const ben = await fundedBacker('pool-over-ben', 100n);
+
+    const first = pledged(await pledgeToFeaturePool(ami, pool.id, 30n, 'po-ami'));
+    expect(first.release.kind).toBe('pending');
+
+    // Ben's 60-coin pledge lands 90 against the 60 target: the pool ships at its TARGET's
+    // split — never the windfall of the whole escrow — and the 30-coin excess returns
+    // pro-rata by stake (10 to ami's 30, 20 to ben's 60) inside the same settlement.
+    const tip = pledged(await pledgeToFeaturePool(ben, pool.id, 60n, 'po-ben'));
+    expect(tip.release.kind).toBe('released');
+    expect(tip.pool).toMatchObject({ pooled: 0n, released: true });
+
+    // The excess is back in the wallets the instant the pool ships: 100 − 30 + 10 and
+    // 100 − 60 + 20 — read from the ledger, the one authority [LAW:one-source-of-truth].
+    expect(await coinBalanceOf(ami)).toBe(80n);
+    expect(await coinBalanceOf(ben)).toBe(60n);
+  });
+
   it('leaves an under-funded pool pending — the backers’ coins stay pooled until the target is met', async () => {
     const pool = await openFeaturePool('pool-wait', 'port the UI to wgpu', 100n);
     const ami = await fundedBacker('pool-wait-ami', 100n);

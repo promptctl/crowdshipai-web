@@ -1,5 +1,5 @@
 {
-  "name": "@crowdship/release",
+  "name": "@crowdship/escrow-shares",
   "version": "0.0.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -8,11 +8,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@crowdship/escrow-shares": "workspace:*",
     "@crowdship/ledger": "workspace:*",
     "@crowdship/ledger-kernel": "workspace:*",
-    "@crowdship/settlement": "workspace:*",
-    "@crowdship/settlement-rail": "workspace:*",
     "@crowdship/std": "workspace:*"
   }
 }

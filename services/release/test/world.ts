@@ -1,4 +1,4 @@
-import { createInMemoryLedger, type Ledger } from '@crowdship/ledger';
+import { createInMemoryLedger, type Ledger, type LedgerQuery } from '@crowdship/ledger';
 import {
   accountId,
   coinAmount,
@@ -80,7 +80,7 @@ const fundEscrow = async (ledger: Ledger, escrowFunds: bigint): Promise<void> =>
 
 /** A ledger with the four accounts a release touches, the escrow holding `escrowFunds`
  *  coins (the coins backers pledged, already in escrow when the pledge opened). */
-export const ledgerWithEscrow = async (escrowFunds: bigint): Promise<Ledger> => {
+export const ledgerWithEscrow = async (escrowFunds: bigint): Promise<Ledger & LedgerQuery> => {
   const ledger = createInMemoryLedger(() => LEDGER_AT);
   must(await ledger.openAccount(account(MINT, 'mint')));
   must(await ledger.openAccount(account(ESCROW, 'escrow')));
@@ -90,9 +90,48 @@ export const ledgerWithEscrow = async (escrowFunds: bigint): Promise<Ledger> => 
   return ledger;
 };
 
+/** The wallet account id of a named backer — `backer-ami` etc., the same shape the refund
+ *  world uses so the settlement suites read alike. */
+export const backerWallet = (id: string): AccountId => acc(`backer-${id}`);
+
+/**
+ * A ledger whose escrow was funded by real per-backer contributions — mint → wallet →
+ * escrow, two genuine movements per backer — so the recorded history the engine reads for
+ * an overshoot return is the record a live platform would produce: the credit legs ARE the
+ * contributor ledger [LAW:one-source-of-truth].
+ */
+export const ledgerFundedBy = async (
+  contributions: readonly { readonly id: string; readonly funds: bigint }[],
+): Promise<Ledger & LedgerQuery> => {
+  const ledger = createInMemoryLedger(() => LEDGER_AT);
+  must(await ledger.openAccount(account(MINT, 'mint')));
+  must(await ledger.openAccount(account(ESCROW, 'escrow')));
+  must(await ledger.openAccount(account(BUILDER, 'user-wallet')));
+  must(await ledger.openAccount(account(PLATFORM, 'platform-revenue')));
+  for (const { id, funds } of contributions) {
+    const wallet = backerWallet(id);
+    must(await ledger.openAccount(account(wallet, 'user-wallet')));
+    must(
+      await ledger.post({
+        transfers: [must(transfer(MINT, wallet, coins(funds)))],
+        reason: reason('mint-to-backer'),
+        idempotencyKey: key(`mint-${id}`),
+      }),
+    );
+    must(
+      await ledger.post({
+        transfers: [must(transfer(wallet, ESCROW, coins(funds)))],
+        reason: reason('pool-contribution'),
+        idempotencyKey: key(`contribute-${id}`),
+      }),
+    );
+  }
+  return ledger;
+};
+
 /** A funded ledger whose builder account was never opened — so a release that tries to pay
  *  the builder is refused by the ledger (`unknown-account`), the realistic loud-refusal case. */
-export const ledgerMissingBuilder = async (escrowFunds: bigint): Promise<Ledger> => {
+export const ledgerMissingBuilder = async (escrowFunds: bigint): Promise<Ledger & LedgerQuery> => {
   const ledger = createInMemoryLedger(() => LEDGER_AT);
   must(await ledger.openAccount(account(MINT, 'mint')));
   must(await ledger.openAccount(account(ESCROW, 'escrow')));
@@ -123,12 +162,13 @@ export const facts = (opts: { accepted?: boolean; resolved?: boolean }): Obligat
  *  on that same ledger — so "has this pledge settled?" is read from the money the engine
  *  moved. The cut defaults to the 10% knob. */
 export const engineOver = (
-  ledger: Ledger,
+  ledger: Ledger & LedgerQuery,
   factSource: ObligationFacts,
   cut: CutPolicy = tenPercentCut,
 ): ReleaseEngine =>
   createReleaseEngine({
     ledger,
+    query: ledger,
     facts: factSource,
     platformAccount: PLATFORM,
     cut,

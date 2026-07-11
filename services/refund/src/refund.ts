@@ -1,16 +1,17 @@
-import type { AccountMovement, LedgerQuery, PostError, PostReceipt } from '@crowdship/ledger';
+import type { LedgerQuery, PostError, PostReceipt } from '@crowdship/ledger';
 import type {
   AccountId,
   Timestamp as LedgerTimestamp,
   TransactionId,
-  Transfer,
 } from '@crowdship/ledger-kernel';
-import { transactionReason, transfer } from '@crowdship/ledger-kernel';
+import { transactionReason } from '@crowdship/ledger-kernel';
 import type { Escrowed, RefundReason, Refunded } from '@crowdship/settlement';
 import { refund } from '@crowdship/settlement';
 import type { SettlementRail } from '@crowdship/settlement-rail';
 import type { Timestamp } from '@crowdship/std';
-import { coinAmount, timestamp } from '@crowdship/std';
+import { timestamp } from '@crowdship/std';
+
+import { netContributions, owedToBackers, proRataShares, returnLegs } from '@crowdship/escrow-shares';
 
 /**
  * The concrete terms the refund engine requires a pledge to carry. Like the release engine's
@@ -120,25 +121,6 @@ const asInstant = (occurredAt: LedgerTimestamp): Timestamp => {
 };
 
 /**
- * Each backer's net contribution to the escrow, read straight from its recorded history: a
- * credit (coins INTO escrow) is what a backer put in, a debit (coins OUT) is what already went
- * back to them. The fold over the history — oldest first, the ledger's contract — yields, per
- * counterparty, the coins still owed back. This is the whole reason the refund needs no second
- * contributor list: the escrow's own legs are the list [LAW:one-source-of-truth]. A counterparty
- * whose net is zero (fully refunded) or negative (a payout leg, e.g. a builder on a release —
- * not a state a refundable pledge reaches, but read honestly if present) is simply not owed a
- * refund, and the caller filters those out.
- */
-const netContributions = (history: readonly AccountMovement[]): ReadonlyMap<AccountId, bigint> => {
-  const net = new Map<AccountId, bigint>();
-  for (const movement of history) {
-    const signed = movement.direction === 'credit' ? (movement.amount as bigint) : -(movement.amount as bigint);
-    net.set(movement.counterparty, (net.get(movement.counterparty) ?? 0n) + signed);
-  }
-  return net;
-};
-
-/**
  * Build the refund engine from the seams it composes. The engine is the BOUNDARY that touches
  * the world: it reads the escrow's history and settles the return through the rail
  * [LAW:effects-at-boundaries]. The sequence is the mirror of the release engine's:
@@ -190,22 +172,13 @@ export const createRefundEngine = (deps: RefundEngineDeps): RefundEngine => {
     const { escrowAccount } = pledge.terms;
     const history = await query.historyOf(escrowAccount);
 
-    // One leg per backer still owed coins, escrow → backer their net contribution. A backer is
-    // a credit counterparty of the escrow, which the ledger guarantees is not the escrow itself
-    // and whose net (filtered > 0) is a valid coin amount — so a failure from either constructor
-    // is a corrupt history, halted loudly rather than downgraded to a routine value
-    // [LAW:no-silent-failure].
-    const legs: Transfer[] = [];
-    for (const [backer, net] of netContributions(history)) {
-      if (net <= 0n) continue;
-      const amount = coinAmount(net);
-      if (!amount.ok) throw new Error(`refund share for ${backer} was not a valid coin amount: ${net}`);
-      const leg = transfer(escrowAccount, backer, amount.value);
-      if (!leg.ok) throw new Error(`refund leg escrow ${escrowAccount} → backer ${backer} was rejected: ${leg.error.kind}`);
-      legs.push(leg.value);
-    }
-
-    const [first, ...rest] = legs;
+    // One leg per backer still owed coins, escrow → backer their net contribution: the shared
+    // pro-rata distribution at its whole-escrow fixed point — returning EVERYTHING owed hands
+    // each backer exactly their net, no rounding possible [LAW:one-type-per-behavior]. The same
+    // distribution the release engine returns a pool's overshoot along, so the two directions
+    // cannot drift in how they read who is owed what [LAW:one-source-of-truth].
+    const net = netContributions(history);
+    const [first, ...rest] = returnLegs(escrowAccount, proRataShares(net, owedToBackers(net)));
     if (first === undefined) return { kind: 'nothing-to-refund', escrowAccount };
 
     // The refund's audit reason IS the policy's refund reason — one source of truth for WHY the

@@ -13,18 +13,21 @@ export const poolId = (raw: string): Result<PoolId, BlankError> => nonBlank<'Poo
 
 /**
  * A pooled obligation as a first-class entity: many backers fund one shared escrow toward
- * one target, and the instant the target is reached the WHOLE pool ships to one builder.
- * This is IDENTITY laid over the positional obligation the auto-release engine already
- * drains [LAW:locality-or-seam] — the escrow account *is* the pool, so the pooled total is
- * that account's ledger balance, never a second running sum a contribution would have to
- * keep in step [LAW:one-source-of-truth].
+ * one target, and the instant the target is reached the pool ships to one builder — the
+ * TARGET's worth of it, with any overshoot returned to the backers pro-rata in the same
+ * settlement. This is IDENTITY laid over the positional obligation the auto-release engine
+ * already drains [LAW:locality-or-seam] — the escrow account *is* the pool, so the pooled
+ * total is that account's ledger balance, never a second running sum a contribution would
+ * have to keep in step [LAW:one-source-of-truth].
  *
  *  - `id` — who this pool is, so contributions, the stream's settlement feed, and a later
  *    refund path all name the same pool rather than passing its accounts around positionally.
  *  - `escrowAccount` — where every backer's coins are held until release; its BALANCE is the
- *    pooled total, judged against the target and drained whole on release.
- *  - `builderAccount` — who ships it, paid the pool minus the platform cut on release.
- *  - `target` — the coins that must accumulate in escrow before the obligation releases.
+ *    pooled total, judged against the target and drained whole on release (the target's
+ *    split to the builder and platform, the excess back to the backers).
+ *  - `builderAccount` — who ships it, paid the target minus the platform cut on release.
+ *  - `target` — the coins that must accumulate in escrow before the obligation releases,
+ *    and exactly what releases when it does: the price the backers funded the feature at.
  */
 export interface Pool {
   readonly id: PoolId;
@@ -62,10 +65,11 @@ const poolPledgeId = (id: PoolId): PledgeId => {
 
 /**
  * Project a pool into the escrowed pledge the auto-release engine settles. The notional
- * `amount` is the target — but the engine ignores it and drains exactly the escrow balance
+ * `amount` is the target — but the engine ignores it and reads exactly the escrow balance
  * [LAW:one-source-of-truth], so the very divergence (notional vs. held) that was a
  * release-engine review finding cannot recur here: many backers funding one escrow makes the
- * held balance the pooled total, and the engine ships all of it. Pure — the instant is owned
+ * held balance the pooled total, and the engine drains all of it — the target's split to
+ * the builder, any overshoot back to the backers, one movement. Pure — the instant is owned
  * and passed in by the boundary, never read ambiently [LAW:no-ambient-temporal-coupling].
  */
 export const asEscrowedPledge = (pool: Pool, at: Timestamp): Escrowed<PoolTerms> =>

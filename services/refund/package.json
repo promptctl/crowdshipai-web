@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@crowdship/escrow-shares": "workspace:*",
     "@crowdship/ledger": "workspace:*",
     "@crowdship/ledger-kernel": "workspace:*",
     "@crowdship/settlement": "workspace:*",
