@@ -48,6 +48,18 @@ export const CHAT_MESSAGE_EVENT = 'chat-message';
 export const PRESENCE_EVENT = 'presence-count';
 
 /**
+ * The open event-type label a settlement moment carries on the wire — settlement joining
+ * the same spine as fired effects, chat, and presence, one more value through the one
+ * `LiveFeed`, never a second real-time channel [LAW:no-mode-explosion]. Minted into a
+ * `LiveEventType` by the publish edge from this very string, so publish and consume
+ * cannot drift apart [LAW:one-source-of-truth]. The frame is a NUDGE, not the record:
+ * the durable money story is the ledger's, re-read through the settlement-feed
+ * projection on every nudge, so a missed frame leaves a watcher a beat stale until the
+ * next nudge or reload — never wrong [LAW:one-source-of-truth].
+ */
+export const SETTLEMENT_EVENT = 'settlement';
+
+/**
  * A fired effect as the watch surface renders it: the open effect kind the builder
  * authored (`shoutout`, `poll-vote`, `bounty-pool`, …), carried as data and shown
  * verbatim, never branched on [LAW:dataflow-not-control-flow]. `effectKind` is the
@@ -78,6 +90,20 @@ export interface ChatLine {
  */
 export interface ViewerPresence {
   readonly count: number;
+}
+
+/**
+ * A settlement moment as it arrives off the wire: which pool's money moved (so the
+ * watcher re-reads that channel's settlement feed — the frame nudges, the ledger
+ * answers [LAW:one-source-of-truth]), and, when the movement was the pool SHIPPING,
+ * the recorded split — the builder's share and the platform's cut, both real ledger
+ * legs carried whole for the one chat line the audience sees the instant it happens.
+ * `shipped` is honest optionality [LAW:dataflow-not-control-flow]: a contribution
+ * nudges the feed but is not a ship, so it carries no split.
+ */
+export interface SettlementMoment {
+  readonly poolTitle: string;
+  readonly shipped?: { readonly releasedCoins: number; readonly cutCoins: number };
 }
 
 /** A record we can index after proving the parsed value is a non-null object. */
@@ -164,4 +190,36 @@ export function parseViewerPresence(raw: string): ViewerPresence | null {
   if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return null;
 
   return { count };
+}
+
+/** A positive whole coin figure off the wire, or null — a released share or a cut is
+ *  always at least one coin (the engine's split invariant), so anything else in a
+ *  shipped frame is a garbled frame, not a smaller settlement. */
+const parseCoinFigure = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null;
+
+/**
+ * Parse one raw SSE `data:` frame into a {@link SettlementMoment}, or `null` when the
+ * frame is not one — the sibling of the parsers above, reading the same wire trust
+ * boundary the same way. A frame of another type, a payload missing its pool title, or
+ * a `shipped` block whose figures are not positive whole coin counts all resolve to
+ * `null`: not this build's settlement moment, never a swallowed error
+ * [LAW:no-silent-failure]. A well-formed frame WITHOUT `shipped` is a real moment — a
+ * contribution or refund nudging the watcher to re-read the durable feed.
+ */
+export function parseSettlement(raw: string): SettlementMoment | null {
+  const frame = decodeFrame(raw);
+  if (frame === null || frame.type !== SETTLEMENT_EVENT) return null;
+  if (!isObject(frame.payload)) return null;
+
+  const { poolTitle, shipped } = frame.payload;
+  if (typeof poolTitle !== 'string' || poolTitle.length === 0) return null;
+  if (shipped === undefined) return { poolTitle };
+
+  if (!isObject(shipped)) return null;
+  const releasedCoins = parseCoinFigure(shipped.releasedCoins);
+  const cutCoins = parseCoinFigure(shipped.cutCoins);
+  if (releasedCoins === null || cutCoins === null) return null;
+
+  return { poolTitle, shipped: { releasedCoins, cutCoins } };
 }

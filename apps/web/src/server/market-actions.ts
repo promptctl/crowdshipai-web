@@ -3,12 +3,32 @@
 import { poolId as makePoolId } from '@crowdship/pool';
 
 import type { FundResult, PledgeResult, PoolOpenResult, SpendResult } from '../data/buy-result';
-import type { PoolView } from '../data/types';
+import type { PoolView, SettlementEventView } from '../data/types';
 import { getCatalog } from '../data/catalog';
-import { coinPurchaseAmount, toFundResult, toPledgeResult, toPoolView, toSpendResult } from './buy-mapping';
+import { chatAuthorLabel } from '../data/chat';
+import {
+  coinPurchaseAmount,
+  toFundResult,
+  toPledgeResult,
+  toPoolView,
+  toSpendResult,
+  toSettlementView,
+  type SettlementPartyLabels,
+} from './buy-mapping';
 import { getChannelService } from './channels';
-import { announceEffectFired } from './live-feed';
-import { coinBalanceOf, creditCoins, listFeaturePools, openFeaturePool, pledgeToFeaturePool, spendOnOffer } from './market';
+import { announceEffectFired, announceSettlement } from './live-feed';
+import {
+  backerPrincipalIdOf,
+  channelSettlementFeed,
+  coinBalanceOf,
+  creditCoins,
+  listFeaturePools,
+  openFeaturePool,
+  pledgeToFeaturePool,
+  settlementFeedOfPool,
+  spendOnOffer,
+  type PledgeOutcome,
+} from './market';
 import { currentPrincipal } from './principal';
 
 /**
@@ -93,6 +113,53 @@ export async function listPools(slug: string): Promise<readonly PoolView[]> {
 }
 
 /**
+ * The channel's transparent settlement timeline — every recorded movement of every pool's
+ * escrow, projected from the ledger's own history and mapped to the view the watch
+ * surface renders. A pure, public read like {@link listPools}: transparency is the
+ * feature, so the money story needs no wallet to be watched [LAW:effects-at-boundaries].
+ * Idempotent by construction — the same history yields the same timeline — so the
+ * surface re-reads it on every settlement nudge and reconnect and can never accumulate
+ * a drifted copy [LAW:one-source-of-truth].
+ *
+ * Party labels are decided here, once, at the edge [LAW:single-enforcer]: a backer is
+ * shown under the SAME public identity chat gives them — their channel's display name if
+ * they are a builder, else their stable viewer pseudonym — by composing the market's
+ * wallet-derivation inverse with chat's one naming policy [LAW:one-source-of-truth].
+ */
+export async function settlementEvents(slug: string): Promise<readonly SettlementEventView[]> {
+  const timeline = await channelSettlementFeed(slug);
+
+  const backers = [
+    ...new Set(
+      timeline.flatMap(({ event }) =>
+        event.kind === 'contribution' || event.kind === 'refund' ? [event.backer] : [],
+      ),
+    ),
+  ];
+  const labelled = await Promise.all(
+    backers.map(async (account) => {
+      const principalId = backerPrincipalIdOf(account);
+      const channel = await getChannelService().channelByOwner(principalId);
+      return [account, chatAuthorLabel(principalId, channel === undefined ? null : channel.profile.displayName)] as const;
+    }),
+  );
+  const backerNames = new Map(labelled);
+
+  const labels: SettlementPartyLabels = {
+    backer: (account) => {
+      const label = backerNames.get(account);
+      // The set above is built from the very events being mapped, so a miss is a bug in
+      // this function, surfaced loudly rather than a mislabeled money line [LAW:no-silent-failure].
+      if (label === undefined) throw new Error(`settlement: no label resolved for backer ${String(account)}`);
+      return label;
+    },
+    builder: slug,
+    platform: 'CrowdShip',
+  };
+  return timeline.map((tagged) => toSettlementView(tagged, labels));
+}
+
+/**
  * A backer pledges coins toward a builder's funding pool, and the surface composes
  * fund-then-release: the pledge action returns immediately with whether the pool
  * shipped. The `attemptId` is the backer's per-click intent — the same discipline
@@ -114,16 +181,44 @@ export async function pledgeToPool(
   const id = makePoolId(poolId);
   if (!id.ok) return { kind: 'no-such-pool' };
 
+  let outcome: PledgeOutcome;
   try {
-    const outcome = await pledgeToFeaturePool(principal, id.value, amount, attemptId);
-    const balance = Number(await coinBalanceOf(principal));
-    return toPledgeResult(outcome.contribution, outcome.release, toPoolView(outcome.pool), balance);
+    outcome = await pledgeToFeaturePool(principal, id.value, amount, attemptId);
   } catch {
     // The only throw path is "no feature pool <id>" — the pool was opened but is no longer
     // in the registry (e.g. process restart with in-memory store). Loud in the server log;
-    // the surface gets a typed absence [LAW:no-silent-failure].
+    // the surface gets a typed absence [LAW:no-silent-failure]. The try is exactly this
+    // wide so nothing downstream can be mistaken for a missing pool.
     return { kind: 'no-such-pool' };
   }
+
+  // The settlement MOVING is the moment the audience sees it — the money twin of the
+  // fired-effect announce above, best-effort live fan-out downstream of already-committed
+  // coins that can never change the backer's result [LAW:one-source-of-truth]. A genuine
+  // release ships ONCE: only the `released` arm carries the shipped line, never the
+  // idempotent `already-released` replay. The shipped figures are read back from the
+  // pool's settlement feed — the ledger's own recorded release and cut legs — never
+  // re-derived from the cut policy, which could drift from what the engine actually
+  // posted [LAW:one-source-of-truth]. A contribution has no replay-distinct arm, so a
+  // faithful retry may re-nudge; a nudge only prompts an idempotent re-read, so a
+  // duplicate is a no-op for every watcher, not a duplicated money line.
+  if (outcome.release.kind === 'released') {
+    const feed = await settlementFeedOfPool(id.value);
+    const release = feed.filter((e) => e.kind === 'release').at(-1);
+    const cut = feed.filter((e) => e.kind === 'cut').at(-1);
+    if (release === undefined || cut === undefined) {
+      throw new Error(`settlement: pool ${poolId} released but its feed shows no release/cut leg`);
+    }
+    await announceSettlement(outcome.pool.builderSlug, {
+      poolTitle: outcome.pool.title,
+      shipped: { releasedCoins: Number(release.amount), cutCoins: Number(cut.amount) },
+    });
+  } else if (outcome.contribution.kind === 'contributed') {
+    await announceSettlement(outcome.pool.builderSlug, { poolTitle: outcome.pool.title });
+  }
+
+  const balance = Number(await coinBalanceOf(principal));
+  return toPledgeResult(outcome.contribution, outcome.release, toPoolView(outcome.pool), balance);
 }
 
 /**

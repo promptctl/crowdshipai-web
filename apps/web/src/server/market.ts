@@ -1,5 +1,5 @@
-import type { Principal } from '@crowdship/identity';
-import { createInMemoryLedger, type Ledger } from '@crowdship/ledger';
+import { accountId as principalAccountId, type Principal } from '@crowdship/identity';
+import { createInMemoryLedger, type Ledger, type LedgerQuery } from '@crowdship/ledger';
 import {
   accountId,
   coinAmount,
@@ -38,6 +38,7 @@ import {
   type ReleaseEngine,
   type ReleaseOutcome,
 } from '@crowdship/release';
+import { settlementFeed, type SettlementEvent, type SettlementRoles } from '@crowdship/settlement-feed';
 import { createCustodialRail, type SettlementRail } from '@crowdship/settlement-rail';
 import { ok, show, timestamp, type Result, type Timestamp } from '@crowdship/std';
 
@@ -124,7 +125,11 @@ interface FeaturePool {
 }
 
 interface Market {
-  readonly ledger: Ledger;
+  /** Both faces of the one engine: the write seam the movements go through, and the
+   *  read/audit seam the settlement feed projects from. One backend implements both,
+   *  so the story the audience reads and the coins that moved cannot disagree
+   *  [LAW:one-source-of-truth]. */
+  readonly ledger: Ledger & LedgerQuery;
   readonly purchaser: Purchaser;
   readonly onRamp: CoinOnRamp;
   /** The negative-allowed mint coins are drawn from; its balance is coins in circulation. */
@@ -402,4 +407,73 @@ export const tryReleaseFeaturePool = async (pool: PoolId): Promise<ReleaseOutcom
   const fp = market.pools.get(pool);
   if (fp === undefined) throw new Error(`market: no feature pool ${show(pool)}`);
   return market.releaseEngine.tryRelease(asEscrowedPledge(fp.pool, nowInstant()));
+};
+
+/** A pool's settlement money roles, assembled from the accounts this composition point
+ *  already owns — the projection cannot divine meaning from raw ledger accounts, so the
+ *  boundary that opened the pool is the one that names them [LAW:single-enforcer]. */
+const settlementRolesOf = (fp: FeaturePool): SettlementRoles => ({
+  escrow: fp.pool.escrowAccount,
+  builder: fp.pool.builderAccount,
+  platform: market.platformAccount,
+});
+
+/**
+ * The transparent money story of one pool — its recorded escrow history projected into
+ * settlement events (contribution, release, cut, refund) by `@crowdship/settlement-feed`.
+ * A pure re-read of the ledger every call [LAW:one-source-of-truth]: idempotent,
+ * replayable, and therefore what a watch surface renders after any nudge or reconnect
+ * with no exactly-once machinery [LAW:no-ambient-temporal-coupling].
+ */
+export const settlementFeedOfPool = async (pool: PoolId): Promise<readonly SettlementEvent[]> => {
+  const fp = market.pools.get(pool);
+  if (fp === undefined) throw new Error(`market: no feature pool ${show(pool)}`);
+  return settlementFeed(market.ledger, settlementRolesOf(fp));
+};
+
+/** One settlement moment on a channel's timeline: the event plus the title of the pool it
+ *  settled against. The tag is the caller's, exactly as the projection prescribes — merging
+ *  several pools' feeds into one channel timeline is a surface concern, not a field the
+ *  money feed mints [LAW:decomposition]. */
+export interface ChannelSettlementEvent {
+  readonly poolTitle: string;
+  readonly event: SettlementEvent;
+}
+
+/**
+ * Every settlement event across a builder's pools, merged oldest-first into the one
+ * channel timeline the watch surface renders — "the releases, refunds, and the cut moving
+ * in view of the stream". Each pool's feed is the ledger's own recorded history; the merge
+ * only interleaves by the instants the engine recorded, deriving nothing of its own
+ * [LAW:one-source-of-truth].
+ */
+export const channelSettlementFeed = async (builderSlug: string): Promise<readonly ChannelSettlementEvent[]> => {
+  const pools = [...market.pools.values()].filter((fp) => fp.builderSlug === builderSlug);
+  const feeds = await Promise.all(
+    pools.map(async (fp) =>
+      (await settlementFeed(market.ledger, settlementRolesOf(fp))).map((event) => ({ poolTitle: fp.title, event })),
+    ),
+  );
+  return feeds.flat().sort((a, b) => Number(a.event.at) - Number(b.event.at));
+};
+
+/**
+ * Recover the principal id inside a backer's wallet account — the inverse of `walletIdOf`,
+ * kept beside it so the derivation and its inverse are one fact in one place
+ * [LAW:one-source-of-truth]. The surface uses it to show the SAME public pseudonym for a
+ * backer's pledge as for their chat lines — one person, one public identity. In this
+ * economy every escrow contributor IS a wallet, so a non-wallet backer account is a
+ * derivation bug surfaced loudly, never mislabeled [LAW:no-silent-failure].
+ */
+export const backerPrincipalIdOf = (backer: AccountId): Principal['id'] => {
+  const raw = String(backer);
+  if (!raw.startsWith('wallet:')) {
+    throw new Error(`market: settlement backer ${raw} is not a wallet account`);
+  }
+  // Re-earn identity's brand through its own constructor — the recovered id is only a
+  // principal id because it validates as one, never because this file says so
+  // [LAW:types-are-the-program].
+  const recovered = principalAccountId(raw.slice('wallet:'.length));
+  if (!recovered.ok) throw new Error(`market: settlement backer ${raw} carries a blank principal id`);
+  return recovered.value;
 };

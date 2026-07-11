@@ -71,6 +71,9 @@ importers:
       '@crowdship/release':
         specifier: workspace:*
         version: link:../../services/release
+      '@crowdship/settlement-feed':
+        specifier: workspace:*
+        version: link:../../services/settlement-feed
       '@crowdship/settlement-rail':
         specifier: workspace:*
         version: link:../../packages/settlement-rail

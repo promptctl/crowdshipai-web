@@ -102,6 +102,33 @@ export interface PoolView {
   readonly released: boolean;
 }
 
+/**
+ * One transparent settlement moment as the watch surface renders it — the view twin of
+ * the projection's `SettlementEvent`, all primitives so it crosses the server-action
+ * boundary cleanly [LAW:effects-at-boundaries]. The `kind` mirrors the projection's
+ * closed discriminator verbatim; the mapping at the seam is an exhaustive match, so a
+ * new settlement kind is a compile error there, never a silently unrendered money
+ * movement [LAW:no-silent-failure]. Every figure is the ledger's recorded leg projected
+ * to a number — the surface renders the money's own story, never a tally it keeps
+ * [LAW:one-source-of-truth].
+ */
+export interface SettlementEventView {
+  readonly kind: 'contribution' | 'release' | 'cut' | 'refund';
+  /** The public display label of the party on the other side of the leg, decided once at
+   *  the server edge (a backer's stable pseudonym — the same one they chat under — the
+   *  builder's slug, or the platform's name) [LAW:single-enforcer]. */
+  readonly party: string;
+  readonly amountCoins: number;
+  /** The escrow balance the instant this leg landed — the live ticker figure, read from
+   *  the ledger's recorded history. Zero after a release or final refund drains it. */
+  readonly pooledAfterCoins: number;
+  /** The title of the pool this moment settled against — the caller-side tag that merges
+   *  several pools' feeds into one channel timeline. */
+  readonly poolTitle: string;
+  /** When the engine recorded the leg, epoch milliseconds. */
+  readonly atMs: number;
+}
+
 /** One line in the live chat. */
 export interface ChatMessage {
   readonly id: string;
@@ -119,8 +146,11 @@ export interface ChatMessage {
   /** Present when this line is a POOL SETTLEMENT EVENT — the whole pool shipped to the builder.
    *  One message type, multiple line kinds [LAW:one-type-per-behavior]: a settled pool is not
    *  a separate message list but one more shape of the live log, so the chat column renders
-   *  the moment settlement happens in view of the stream (e5a.5) [LAW:effects-at-boundaries]. */
-  readonly settledPool?: { readonly title: string; readonly pooledCoins: number };
+   *  the moment settlement happens in view of the stream (e5a.5) [LAW:effects-at-boundaries].
+   *  The figures are the ledger's recorded release and cut legs, carried whole on the live
+   *  frame that announced the ship — the split shown in plain view, cut included, exactly as
+   *  the money moved [LAW:one-source-of-truth]. */
+  readonly settledPool?: { readonly title: string; readonly releasedCoins: number; readonly cutCoins: number };
 }
 
 /**

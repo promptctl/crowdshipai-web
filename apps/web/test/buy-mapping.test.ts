@@ -1,8 +1,17 @@
+import { accountId, coinAmount, transactionReason, type AccountId } from '@crowdship/ledger-kernel';
 import type { OnRampOutcome } from '@crowdship/on-ramp';
 import type { PurchaseOutcome } from '@crowdship/purchase';
+import type { SettlementEvent } from '@crowdship/settlement-feed';
+import { timestamp } from '@crowdship/std';
 import { describe, expect, it } from 'vitest';
 
-import { coinPurchaseAmount, toFundResult, toSpendResult } from '../src/server/buy-mapping';
+import {
+  coinPurchaseAmount,
+  toFundResult,
+  toSettlementView,
+  toSpendResult,
+  type SettlementPartyLabels,
+} from '../src/server/buy-mapping';
 
 // The mappers read only the discriminant (and, for charge-refused, the ledger
 // error kind); fabricating outcomes with just those fields keeps the test on the
@@ -81,5 +90,74 @@ describe('toFundResult — on-ramp outcome projected to the surface', () => {
 
   it('keeps credit-refused distinct from a decline — money in, no coins (loud reconciliation)', () => {
     expect(toFundResult(onramp({ kind: 'credit-refused' }), 0)).toEqual({ kind: 'credit-refused', balance: 0 });
+  });
+});
+
+// Real branded values, not casts: the mapper's contract includes projecting brands and
+// bigints to plain primitives, so the test feeds it exactly what the projection emits.
+const must = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => {
+  if (!r.ok) throw new Error(`expected ok, got ${JSON.stringify(r.error)}`);
+  return r.value;
+};
+const account = (raw: string): AccountId => must(accountId(raw));
+const settlementEvent = (
+  e: Partial<SettlementEvent> & { kind: SettlementEvent['kind'] },
+): SettlementEvent =>
+  ({
+    amount: must(coinAmount(20n)),
+    pooledAfter: 20n,
+    reason: must(transactionReason('pool-contribution')),
+    at: must(timestamp(1_700_000_000_000)),
+    ...e,
+  }) as SettlementEvent;
+
+const labels: SettlementPartyLabels = {
+  backer: (a) => `label-of:${String(a)}`,
+  builder: 'ffmpeg-witch',
+  platform: 'CrowdShip',
+};
+
+describe('toSettlementView — a projected settlement event crossed to the surface', () => {
+  it('maps a contribution with the backer’s public label and the live pooled-after ticker', () => {
+    const view = toSettlementView(
+      { poolTitle: 'add HDR', event: settlementEvent({ kind: 'contribution', backer: account('wallet:ami') }) },
+      labels,
+    );
+    expect(view).toEqual({
+      kind: 'contribution',
+      party: 'label-of:wallet:ami',
+      amountCoins: 20,
+      pooledAfterCoins: 20,
+      poolTitle: 'add HDR',
+      atMs: 1_700_000_000_000,
+    });
+  });
+
+  it('maps a release to the builder and a cut to the platform under their fixed labels', () => {
+    const release = toSettlementView(
+      {
+        poolTitle: 'add HDR',
+        event: settlementEvent({ kind: 'release', builder: account('builder:ffmpeg-witch'), pooledAfter: 6n }),
+      },
+      labels,
+    );
+    expect(release).toMatchObject({ kind: 'release', party: 'ffmpeg-witch', pooledAfterCoins: 6 });
+
+    const cut = toSettlementView(
+      {
+        poolTitle: 'add HDR',
+        event: settlementEvent({ kind: 'cut', platform: account('platform-revenue'), pooledAfter: 0n }),
+      },
+      labels,
+    );
+    expect(cut).toMatchObject({ kind: 'cut', party: 'CrowdShip', pooledAfterCoins: 0 });
+  });
+
+  it('maps a refund back to the backer’s public label — the failure mode shown as plainly as the success', () => {
+    const view = toSettlementView(
+      { poolTitle: 'add HDR', event: settlementEvent({ kind: 'refund', backer: account('wallet:ben'), pooledAfter: 0n }) },
+      labels,
+    );
+    expect(view).toMatchObject({ kind: 'refund', party: 'label-of:wallet:ben', pooledAfterCoins: 0 });
   });
 });

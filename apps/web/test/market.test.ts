@@ -4,11 +4,14 @@ import type { Result } from '@crowdship/std';
 import { describe, expect, it } from 'vitest';
 
 import {
+  backerPrincipalIdOf,
+  channelSettlementFeed,
   coinBalanceOf,
   creditCoins,
   listFeaturePools,
   openFeaturePool,
   pledgeToFeaturePool,
+  settlementFeedOfPool,
   spendOnOffer,
   type FeaturePoolView,
 } from '../src/server/market';
@@ -145,5 +148,72 @@ describe('pooled obligations that pay themselves out, end to end through the mar
     const pools: readonly FeaturePoolView[] = await listFeaturePools('pool-list');
     expect(pools).toHaveLength(1);
     expect(pools[0]).toMatchObject({ title: 'add subtitles', target: 50n, pooled: 15n, released: false });
+  });
+});
+
+describe('the transparent settlement feed, projected from the ledger through the market', () => {
+  it('tells a shipped pool’s whole money story: contributions filling, the release, and the cut in plain view', async () => {
+    const pool = await openFeaturePool('feed-ship', 'wire up the overlay', 60n);
+    const ami = await fundedBacker('feed-ami', 100n);
+    const ben = await fundedBacker('feed-ben', 100n);
+    await pledgeToFeaturePool(ami, pool.id, 20n, 'sf-ami');
+    const tipping = await pledgeToFeaturePool(ben, pool.id, 40n, 'sf-ben');
+    expect(tipping.release.kind).toBe('released');
+
+    const feed = await settlementFeedOfPool(pool.id);
+
+    // The story in the order the ledger recorded it: two contributions carrying the
+    // live pooled-after ticker, then the split of the shipped gross — 10% cut, the
+    // rest to the builder — draining the escrow to zero.
+    expect(feed.map((e) => e.kind)).toEqual(['contribution', 'contribution', 'release', 'cut']);
+    expect(feed[0]).toMatchObject({ kind: 'contribution', amount: 20n, pooledAfter: 20n });
+    expect(feed[1]).toMatchObject({ kind: 'contribution', amount: 40n, pooledAfter: 60n });
+    expect(feed[2]).toMatchObject({ kind: 'release', amount: 54n });
+    expect(feed[3]).toMatchObject({ kind: 'cut', amount: 6n });
+    // Whatever order the engine posted the split's legs, the story ends with the escrow empty.
+    expect(feed[feed.length - 1]?.pooledAfter).toBe(0n);
+    // Conservation, read from the story itself: what left the escrow is exactly what filled it.
+    expect(54n + 6n).toBe(20n + 40n);
+  });
+
+  it('is an idempotent projection — re-reading the same history yields the identical feed', async () => {
+    const pool = await openFeaturePool('feed-idem', 'add a replay buffer', 100n);
+    const ami = await fundedBacker('feed-idem-ami', 100n);
+    await pledgeToFeaturePool(ami, pool.id, 25n, 'sfi-ami');
+
+    const first = await settlementFeedOfPool(pool.id);
+    const second = await settlementFeedOfPool(pool.id);
+    expect(second).toEqual(first);
+  });
+
+  it('merges a builder’s pools into one channel timeline, tagged by pool title, oldest first', async () => {
+    const alpha = await openFeaturePool('feed-merge', 'pool alpha', 100n);
+    const beta = await openFeaturePool('feed-merge', 'pool beta', 100n);
+    const ami = await fundedBacker('feed-merge-ami', 100n);
+    await pledgeToFeaturePool(ami, alpha.id, 10n, 'sfm-a');
+    await pledgeToFeaturePool(ami, beta.id, 15n, 'sfm-b');
+
+    const timeline = await channelSettlementFeed('feed-merge');
+    expect(timeline).toHaveLength(2);
+    expect(timeline.map((t) => t.poolTitle).toSorted()).toEqual(['pool alpha', 'pool beta']);
+    expect(timeline.map((t) => t.event.amount).toSorted()).toEqual([10n, 15n]);
+    // Oldest first across pools — the instants the engine recorded, never re-derived.
+    const instants = timeline.map((t) => Number(t.event.at));
+    expect(instants).toEqual([...instants].sort((a, b) => a - b));
+  });
+
+  it('recovers the principal inside a wallet account, and refuses a non-wallet loudly', async () => {
+    const ami = await fundedBacker('feed-party', 50n);
+    const pool = await openFeaturePool('feed-party', 'name the backer', 100n);
+    await pledgeToFeaturePool(ami, pool.id, 10n, 'sfp-ami');
+
+    const feed = await settlementFeedOfPool(pool.id);
+    const contribution = feed[0];
+    if (contribution?.kind !== 'contribution') throw new Error('expected a contribution');
+    expect(String(backerPrincipalIdOf(contribution.backer))).toBe('feed-party');
+
+    expect(() => backerPrincipalIdOf(contribution.backer.toString().replace('wallet:', 'builder:') as typeof contribution.backer)).toThrow(
+      /not a wallet account/,
+    );
   });
 });

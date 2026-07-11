@@ -45,7 +45,8 @@ export function Chat({
               className="rounded-sm border border-emerald-500/40 bg-emerald-500/10 px-2 py-2 text-xs text-emerald-300"
             >
               <span className="font-bold">SHIPPED</span>
-              {' '}◎ {m.settledPool.pooledCoins.toLocaleString('en-US')} coins released —{' '}
+              {' '}◎ {m.settledPool.releasedCoins.toLocaleString('en-US')} to the builder, ◎{' '}
+              {m.settledPool.cutCoins.toLocaleString('en-US')} platform cut —{' '}
               <span className="font-semibold">{m.settledPool.title}</span>
             </div>
           ) : m.firedEffectKind !== undefined ? (

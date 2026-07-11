@@ -5,10 +5,10 @@ import Link from 'next/link';
 
 import type { FundResult, PledgeResult, SpendResult } from '@/data/buy-result';
 import type { ChatResult } from '@/data/chat-result';
-import { parseChatMessage, parseFiredEffect, parseViewerPresence } from '@/data/live-event';
-import type { ChannelView, ChatMessage, PoolView, PricedOffer } from '@/data/types';
+import { parseChatMessage, parseFiredEffect, parseSettlement, parseViewerPresence } from '@/data/live-event';
+import type { ChannelView, ChatMessage, PoolView, PricedOffer, SettlementEventView } from '@/data/types';
 import { sendChat } from '@/server/chat-actions';
-import { buyCoins, buyOffer, listPools, pledgeToPool } from '@/server/market-actions';
+import { buyCoins, buyOffer, listPools, pledgeToPool, settlementEvents } from '@/server/market-actions';
 
 import { BuilderAvatar } from './BuilderAvatar';
 import { Chat } from './Chat';
@@ -49,9 +49,6 @@ type Notice = { readonly tone: 'ok' | 'info' | 'warn' | 'error'; readonly text: 
 type Delta = {
   readonly balance?: number;
   readonly notice: Notice;
-  /** Present when a pledge tipped a pool and it auto-released — carry the event so
-   *  the surface can append it to the chat log in view of the stream [LAW:dataflow-not-control-flow]. */
-  readonly poolReleased?: PoolView;
   /** Present when a pledge moved coins — carry the updated pool so the panel reflects
    *  the ledger's new escrow balance without a second round-trip [LAW:one-source-of-truth]. */
   readonly poolUpdated?: PoolView;
@@ -66,10 +63,12 @@ const pledgeDelta = (r: PledgeResult): Delta => {
         notice: { tone: 'ok', text: `Pledged — ◎ ${r.pool.pooledCoins.toLocaleString('en-US')} / ${r.pool.targetCoins.toLocaleString('en-US')} pooled.` },
       };
     case 'contributed-released':
+      // The SHIPPED chat line is NOT appended here: the release rides the live channel's
+      // settlement frame, so the tipping backer sees exactly the broadcast every other
+      // watcher sees — one source, no private echo [LAW:one-source-of-truth].
       return {
         balance: r.balance,
         poolUpdated: r.pool,
-        poolReleased: r.pool,
         notice: { tone: 'ok', text: `Pool hit its target — auto-released to the builder!` },
       };
     case 'insufficient-coins':
@@ -171,6 +170,7 @@ export function WatchSurface({
   initialBalance,
   initialViewerCount,
   initialPools,
+  initialSettlement,
   signedIn,
 }: {
   readonly channel: ChannelView;
@@ -183,6 +183,11 @@ export function WatchSurface({
    *  read at the server edge [LAW:one-source-of-truth]. Updated client-side as
    *  backers pledge so the panel reflects the ledger without a page reload. */
   readonly initialPools: readonly PoolView[];
+  /** The channel's settlement timeline at first paint — the ledger's own recorded
+   *  history projected at the server edge, so a viewer who just arrived (or just
+   *  reconnected) reads the same durable money story as one who watched it happen
+   *  [LAW:one-source-of-truth]. Kept live below by re-reading on settlement nudges. */
+  readonly initialSettlement: readonly SettlementEventView[];
   /** Whether a live session backs this view — the chat input is a courtesy gate on
    *  it; the send action is the real authenticator [LAW:single-enforcer]. */
   readonly signedIn: boolean;
@@ -190,6 +195,7 @@ export function WatchSurface({
   const { stream } = channel;
   const [messages, setMessages] = useState<readonly ChatMessage[]>(channel.chat);
   const [pools, setPools] = useState<readonly PoolView[]>(initialPools);
+  const [settlement, setSettlement] = useState<readonly SettlementEventView[]>(initialSettlement);
   // The viewer count is owned here and seeded from the registry's reading at the edge,
   // then driven live by presence frames off the one subscription below. It is derived
   // state surfaced from the registry's truth, never a tally this surface keeps itself
@@ -217,8 +223,32 @@ export function WatchSurface({
   // lines [LAW:one-source-of-truth]. A frame that is not a fired effect (a future
   // event type, a garbled frame) parses to null and is simply not a chat line — honest
   // optionality at the wire trust boundary, not a swallowed error [LAW:no-silent-failure].
+  // The nudge→re-read half of the settlement spine: every settlement frame prompts a
+  // fresh read of the pools and the settlement timeline from the ledger's own record,
+  // so what this surface shows is always a projection of the durable truth, never an
+  // accumulation of frames that could drift or double [LAW:one-source-of-truth]. Reads
+  // can land out of order; the sequence ref names the one owner of "which read is
+  // current", so a slow older read never overwrites a newer view
+  // [LAW:no-ambient-temporal-coupling]. A ref, not state: bumping it must not re-render.
+  const moneyReadSeq = useRef(0);
+
   useEffect(() => {
     const source = new EventSource(`/watch/${stream.slug}/events`);
+    const refreshMoney = () => {
+      const seq = (moneyReadSeq.current += 1);
+      void Promise.all([listPools(stream.slug), settlementEvents(stream.slug)])
+        .then(([poolsNow, settlementNow]) => {
+          if (moneyReadSeq.current !== seq) return;
+          setPools(poolsNow);
+          setSettlement(settlementNow);
+        })
+        .catch(() => {
+          // The durable record is intact server-side; only this view's refresh failed.
+          // Say so honestly rather than leaving a silently stale money panel
+          // [LAW:no-silent-failure].
+          setNotice({ tone: 'warn', text: 'Live money view failed to refresh — reload to see the latest.' });
+        });
+    };
     source.onmessage = (e) => {
       // The one subscription carries every event type on the topic; route each frame
       // to its renderer by which parser claims it. A fired effect and a chat line are
@@ -235,6 +265,28 @@ export function WatchSurface({
         setMessages((prev) => [...prev, { id: mintId('chat'), author: chat.author, text: chat.text }]);
         return;
       }
+      // A settlement frame: money moved against one of this builder's pools. Always a
+      // nudge to re-read the durable projection; additionally the one SHIPPED line the
+      // audience sees the moment a pool settles, rendered from the frame's recorded
+      // figures — the same broadcast for every watcher, tipping backer included
+      // [LAW:one-source-of-truth].
+      const settled = parseSettlement(e.data);
+      if (settled !== null) {
+        refreshMoney();
+        if (settled.shipped !== undefined) {
+          const shipped = settled.shipped;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: mintId('settlement'),
+              author: '',
+              text: '',
+              settledPool: { title: settled.poolTitle, releasedCoins: shipped.releasedCoins, cutCoins: shipped.cutCoins },
+            },
+          ]);
+        }
+        return;
+      }
       // A presence frame is not a chat line — it sets the live viewer count, the one
       // event type this surface renders outside the message list. The count it carries
       // is the registry's already-derived truth; the surface shows it, never sums it
@@ -249,30 +301,15 @@ export function WatchSurface({
 
   // Apply a buy outcome's view delta: the new balance and the notice, moved together
   // so the surface never shows a stale balance beside a fresh notice [LAW:one-source-of-truth].
-  // The fired chat line is NOT applied here — it arrives over the live channel above,
-  // the same broadcast every other watcher sees.
-  // A pool release IS surfaced here — it is synchronous in the pledge response, so
-  // the backer who tips the target sees the settlement event immediately as a chat line,
-  // even before the live feed carries it (the feed is the durable path; this is the
-  // backer's own fast-path confirmation, same spirit as a fired-effect ack) [LAW:dataflow-not-control-flow].
+  // Neither the fired chat line nor the pool-shipped line is applied here — both arrive
+  // over the live channel above, the same broadcast every other watcher sees, so the
+  // buyer is never shown a private echo the audience cannot [LAW:one-source-of-truth].
   const apply = (delta: Delta) => {
     if (delta.balance !== undefined) setBalance(delta.balance);
     setNotice(delta.notice);
     if (delta.poolUpdated !== undefined) {
       const updated = delta.poolUpdated;
       setPools((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    }
-    if (delta.poolReleased !== undefined) {
-      const released = delta.poolReleased;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: mintId('settlement'),
-          author: '',
-          text: '',
-          settledPool: { title: released.title, pooledCoins: released.pooledCoins },
-        },
-      ]);
     }
   };
 
@@ -381,6 +418,11 @@ export function WatchSurface({
               <Pools pools={pools} balance={balance ?? 0} busy={busy} onPledge={onPledge} />
             </div>
           )}
+          {settlement.length > 0 && (
+            <div className="overflow-hidden rounded-lg border border-edge bg-surface">
+              <SettlementFeed events={settlement} />
+            </div>
+          )}
           <div className="overflow-hidden rounded-lg border border-edge bg-surface">
             <Menu offers={channel.menu} balance={balance ?? 0} onSpend={onSpend} />
           </div>
@@ -419,6 +461,57 @@ function Pools({
         {pools.map((pool) => (
           <PoolCard key={pool.id} pool={pool} balance={balance} busy={busy} onPledge={onPledge} />
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** How each settlement kind reads on the timeline — verb, direction, and tone as a
+ *  value map over the closed kind union, so rendering a kind is a lookup and a new
+ *  kind is a compile error in this Record, never an invisible money line
+ *  [LAW:dataflow-not-control-flow]. Tones follow the money: contributions fill
+ *  (neutral), a release ships (emerald, the SHIPPED green), the cut is the platform's
+ *  skim in plain view (amber), a refund makes a backer whole (fog). */
+const SETTLEMENT_LINE: Readonly<
+  Record<SettlementEventView['kind'], { readonly verb: string; readonly sign: '+' | '−'; readonly tone: string }>
+> = {
+  contribution: { verb: 'pooled by', sign: '+', tone: 'text-chalk/90' },
+  release: { verb: 'released to', sign: '−', tone: 'text-emerald-300' },
+  cut: { verb: 'platform cut to', sign: '−', tone: 'text-amber-300' },
+  refund: { verb: 'refunded to', sign: '−', tone: 'text-fog' },
+};
+
+/**
+ * The transparent settlement timeline: every recorded movement of this channel's pool
+ * escrows, newest first, exactly as the ledger tells it — the audience watches the money
+ * itself, never a tally this surface keeps [LAW:one-source-of-truth]. A pure projection
+ * of the `events` value; liveness is the owner's concern (it re-reads on every
+ * settlement nudge), never this renderer's [LAW:decomposition].
+ */
+function SettlementFeed({ events }: { readonly events: readonly SettlementEventView[] }) {
+  const newestFirst = [...events].reverse();
+  return (
+    <div className="p-3">
+      <span className="text-xs font-semibold uppercase tracking-wider text-fog">settlement</span>
+      <div className="mt-2.5 flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+        {newestFirst.map((e, i) => {
+          const line = SETTLEMENT_LINE[e.kind];
+          return (
+            // Index keys are stable here because the list is replaced whole on every
+            // re-read, never mutated in place.
+            <div key={i} className="text-[11px] leading-snug">
+              <span className={`font-semibold tabular-nums ${line.tone}`}>
+                {line.sign} ◎ {e.amountCoins.toLocaleString('en-US')}
+              </span>{' '}
+              <span className="text-fog">{line.verb}</span>{' '}
+              <span className="font-semibold text-chalk/90">{e.party}</span>
+              <span className="text-fog">
+                {' '}
+                — {e.poolTitle} · ◎ {e.pooledAfterCoins.toLocaleString('en-US')} in escrow
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

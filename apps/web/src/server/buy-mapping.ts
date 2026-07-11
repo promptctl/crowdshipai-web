@@ -1,11 +1,12 @@
+import type { AccountId } from '@crowdship/ledger-kernel';
 import type { OnRampOutcome } from '@crowdship/on-ramp';
 import type { ContributionOutcome } from '@crowdship/pool';
 import type { PurchaseOutcome } from '@crowdship/purchase';
 import type { ReleaseOutcome } from '@crowdship/release';
 
 import type { FundResult, PledgeResult, SpendResult } from '../data/buy-result';
-import type { PoolView } from '../data/types';
-import type { FeaturePoolView } from './market';
+import type { PoolView, SettlementEventView } from '../data/types';
+import type { ChannelSettlementEvent, FeaturePoolView } from './market';
 
 /**
  * Parse an untrusted coin amount from the wire into a positive, exact count — or
@@ -86,6 +87,52 @@ export const toPoolView = (view: FeaturePoolView): PoolView => ({
   pooledCoins: Number(view.pooled),
   released: view.released,
 });
+
+/**
+ * The public display labels a settlement event's parties resolve to — the facts the
+ * projection deliberately does not hold, lifted to this seam as values so the mapper
+ * stays a closed, caller-agnostic projection [LAW:composability]. The backer label is a
+ * function because WHICH backer varies per event; the builder and platform are fixed for
+ * the channel being rendered. The action edge supplies all three, applying the same
+ * naming policy chat uses so one person carries one public identity everywhere
+ * [LAW:one-source-of-truth].
+ */
+export interface SettlementPartyLabels {
+  backer(account: AccountId): string;
+  readonly builder: string;
+  readonly platform: string;
+}
+
+/**
+ * Project one tagged settlement event (branded ids, bigints, timestamps) to the
+ * serializable {@link SettlementEventView} the surface holds — plain strings and numbers
+ * only, same discipline as {@link toPoolView} [LAW:effects-at-boundaries]. Pure and
+ * total: an exhaustive match over the projection's closed event union, so a new
+ * settlement kind is a compile error here, never a money movement the surface silently
+ * fails to render [LAW:dataflow-not-control-flow] [LAW:no-silent-failure].
+ */
+export const toSettlementView = (
+  tagged: ChannelSettlementEvent,
+  labels: SettlementPartyLabels,
+): SettlementEventView => {
+  const { poolTitle, event } = tagged;
+  const common = {
+    poolTitle,
+    amountCoins: Number(event.amount),
+    pooledAfterCoins: Number(event.pooledAfter),
+    atMs: Number(event.at),
+  };
+  switch (event.kind) {
+    case 'contribution':
+      return { kind: 'contribution', party: labels.backer(event.backer), ...common };
+    case 'release':
+      return { kind: 'release', party: labels.builder, ...common };
+    case 'cut':
+      return { kind: 'cut', party: labels.platform, ...common };
+    case 'refund':
+      return { kind: 'refund', party: labels.backer(event.backer), ...common };
+  }
+};
 
 /**
  * Project the pool pledge's composite domain outcome onto the surface result. Pure and

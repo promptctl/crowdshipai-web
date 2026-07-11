@@ -300,10 +300,16 @@ stream services, and a person can today sign up, author a menu, buy coins (real
 on-ramp → real ledger), and spend coins on a menu offer that fires an effect into
 live chat. The coin ledger runs on **TigerBeetle** behind a `Ledger` seam (the
 engine owns balances, idempotency, and the no-overdraft rule; an in-memory fake
-stands in behind the same seam for fast tests). **Known gap:** the self-settling
-obligation loop — `pool` / `release` / `refund` / `settlement-feed` — is fully
-built and tested but **not yet surfaced in the UI or any API**; it is the core
-pillar still behind the curtain, and wiring it to a person is the live priority. This document is the
+stands in behind the same seam for fast tests). The self-settling obligation loop
+is now **in a person's hands**: a builder opens a funding pool from the studio, a
+backer pledges toward it on the watch page, the pool auto-releases to the builder
+the instant its target is met — and every viewer of the channel watches it happen
+live: the SHIPPED broadcast with the released figure and the platform cut in plain
+view, plus a settlement timeline projected from the ledger's own recorded history
+(so it survives reloads and reconnects by construction). **Known gap:** the refund
+path — an unmet or cancelled pool returning backers' stakes — is built and even
+renders if it ever moves money, but no surface can yet *cause* a refund (e5a.11);
+overshoot and contested-after-met refinements likewise remain engine-only. This document is the
 source of truth for *intent*; build toward it, and update it when intent changes —
 never let it drift from what we're actually building.
 

@@ -10,7 +10,13 @@ import {
 } from '@crowdship/live-feed';
 import type { Effect, EffectReceipt } from '@crowdship/menu';
 
-import { CHAT_MESSAGE_EVENT, EFFECT_FIRED_EVENT, PRESENCE_EVENT } from '../data/live-event';
+import {
+  CHAT_MESSAGE_EVENT,
+  EFFECT_FIRED_EVENT,
+  PRESENCE_EVENT,
+  SETTLEMENT_EVENT,
+  type SettlementMoment,
+} from '../data/live-event';
 
 /**
  * The single place the web app decides which {@link LiveFeed} it runs against
@@ -44,10 +50,12 @@ const mintEventType = (label: string): LiveEventType => {
 };
 
 // The open labels each announcer below publishes under — fired effects, chat lines,
-// and the live viewer count, every kind riding the one feed [LAW:no-mode-explosion].
+// the live viewer count, and settlement moments, every kind riding the one feed
+// [LAW:no-mode-explosion].
 const EFFECT_FIRED: LiveEventType = mintEventType(EFFECT_FIRED_EVENT);
 const CHAT_MESSAGE: LiveEventType = mintEventType(CHAT_MESSAGE_EVENT);
 const PRESENCE: LiveEventType = mintEventType(PRESENCE_EVENT);
+const SETTLEMENT: LiveEventType = mintEventType(SETTLEMENT_EVENT);
 
 // One feed per process, the single owner of the in-memory subscriptions
 // [LAW:no-shared-mutable-globals]. Cached on globalThis so Next.js dev HMR, which
@@ -131,6 +139,25 @@ export const announcePresence = (builderSlug: string, count: number): Promise<vo
     type: PRESENCE,
     at: clock.now(),
     payload: { count },
+  };
+  return getLiveFeed().publish(liveTopicOf(builderSlug), live);
+};
+
+/**
+ * Announce a settlement moment on a builder's stream — the money moving in view of the
+ * audience, the publish half of the settlement→stream seam and the twin of
+ * {@link announceEffectFired}. The frame is a NUDGE plus the one line worth saying the
+ * instant a pool ships: the durable money story stays the ledger's, and every watcher
+ * re-reads the settlement-feed projection on receipt, so a missed or replayed frame
+ * can never make the audience's view of the money wrong — only a beat stale
+ * [LAW:one-source-of-truth]. The `shipped` figures ride the frame verbatim from the
+ * ledger's recorded release and cut legs; this edge derives nothing.
+ */
+export const announceSettlement = (builderSlug: string, moment: SettlementMoment): Promise<void> => {
+  const live: LiveEvent = {
+    type: SETTLEMENT,
+    at: clock.now(),
+    payload: moment.shipped === undefined ? { poolTitle: moment.poolTitle } : { poolTitle: moment.poolTitle, shipped: moment.shipped },
   };
   return getLiveFeed().publish(liveTopicOf(builderSlug), live);
 };

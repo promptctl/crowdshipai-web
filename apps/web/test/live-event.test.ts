@@ -4,8 +4,10 @@ import {
   CHAT_MESSAGE_EVENT,
   EFFECT_FIRED_EVENT,
   PRESENCE_EVENT,
+  SETTLEMENT_EVENT,
   parseChatMessage,
   parseFiredEffect,
+  parseSettlement,
   parseViewerPresence,
 } from '../src/data/live-event';
 
@@ -174,5 +176,52 @@ describe('the sibling parsers stay in their lanes', () => {
   it('parseViewerPresence does not claim a fired-effect or chat frame', () => {
     expect(parseViewerPresence(firedFrame('shoutout'))).toBeNull();
     expect(parseViewerPresence(chatFrame('mara', 'hi'))).toBeNull();
+  });
+});
+
+/** The exact frame the publish edge (`announceSettlement`) puts on the wire — a nudge
+ *  naming the pool, plus the recorded split when the movement shipped it. Built here
+ *  verbatim so this test fails loudly if the two halves of the seam ever drift
+ *  [LAW:one-source-of-truth]. */
+const settlementFrame = (payload: unknown): string =>
+  JSON.stringify({ type: SETTLEMENT_EVENT, at: 1_700_000_000_000, payload });
+
+describe('parseSettlement', () => {
+  it('reads a plain nudge — money moved against this pool, go re-read the durable feed', () => {
+    expect(parseSettlement(settlementFrame({ poolTitle: 'add HDR' }))).toEqual({ poolTitle: 'add HDR' });
+  });
+
+  it('reads a shipped moment with the recorded release and cut figures', () => {
+    expect(
+      parseSettlement(settlementFrame({ poolTitle: 'add HDR', shipped: { releasedCoins: 54, cutCoins: 6 } })),
+    ).toEqual({ poolTitle: 'add HDR', shipped: { releasedCoins: 54, cutCoins: 6 } });
+  });
+
+  it('is null for a garbled, non-JSON frame from the wire', () => {
+    expect(parseSettlement('data data data')).toBeNull();
+  });
+
+  it('is null when the payload carries no usable pool title', () => {
+    expect(parseSettlement(settlementFrame({}))).toBeNull();
+    expect(parseSettlement(settlementFrame({ poolTitle: '' }))).toBeNull();
+    expect(parseSettlement(settlementFrame({ poolTitle: 7 }))).toBeNull();
+  });
+
+  it('is null when a shipped block is present but its figures are not positive whole coin counts', () => {
+    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: { releasedCoins: 0, cutCoins: 6 } }))).toBeNull();
+    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: { releasedCoins: 54, cutCoins: -6 } }))).toBeNull();
+    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: { releasedCoins: 5.4, cutCoins: 6 } }))).toBeNull();
+    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: { cutCoins: 6 } }))).toBeNull();
+    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: 'yes' }))).toBeNull();
+  });
+
+  it('does not claim its siblings’ frames, and they do not claim its', () => {
+    expect(parseSettlement(firedFrame('shoutout'))).toBeNull();
+    expect(parseSettlement(chatFrame('mara', 'hi'))).toBeNull();
+    expect(parseSettlement(presenceFrame(3))).toBeNull();
+    const shipped = settlementFrame({ poolTitle: 't', shipped: { releasedCoins: 54, cutCoins: 6 } });
+    expect(parseFiredEffect(shipped)).toBeNull();
+    expect(parseChatMessage(shipped)).toBeNull();
+    expect(parseViewerPresence(shipped)).toBeNull();
   });
 });

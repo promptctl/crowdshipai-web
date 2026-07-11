@@ -26,6 +26,7 @@
     "@crowdship/presence": "workspace:*",
     "@crowdship/purchase": "workspace:*",
     "@crowdship/release": "workspace:*",
+    "@crowdship/settlement-feed": "workspace:*",
     "@crowdship/settlement-rail": "workspace:*",
     "@crowdship/rate-limit": "workspace:*",
     "@crowdship/std": "workspace:*",
