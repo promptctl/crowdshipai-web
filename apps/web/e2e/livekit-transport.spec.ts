@@ -1,5 +1,6 @@
 import { chromium, expect, test } from '@playwright/test';
 
+import { E2E_PROXY } from './proxy';
 import { openSecurePage, requireLiveKitEnv, tokenMinter } from './support';
 
 /**
@@ -25,6 +26,9 @@ const runTransport = async (kind: 'camera' | 'screen', expectedSource: 'camera' 
   ]);
 
   const browser = await chromium.launch({
+    // The same tunnel the config's default browser uses — this spec launches its own
+    // chromium, so it binds the proxy itself [LAW:one-source-of-truth].
+    proxy: E2E_PROXY,
     args: [
       '--use-fake-device-for-media-stream',
       '--use-fake-ui-for-media-stream',
