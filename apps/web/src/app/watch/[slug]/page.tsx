@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { WatchSurface } from '@/components/WatchSurface';
 import { getCatalog } from '@/data/catalog';
 import { listPools, settlementEvents, walletBalance } from '@/server/market-actions';
+import { overlayStyleOf } from '@/server/overlay-actions';
 import { getPresenceRegistry, presenceTopicOf } from '@/server/presence';
 import { currentPrincipal } from '@/server/principal';
 
@@ -35,6 +36,7 @@ export default async function WatchPage({ params }: { readonly params: Promise<{
       initialViewerCount={getPresenceRegistry().countOf(presenceTopicOf(slug))}
       initialPools={await listPools(slug)}
       initialSettlement={await settlementEvents(slug)}
+      initialOverlayStyle={await overlayStyleOf(slug)}
       signedIn={(await currentPrincipal()) !== null}
     />
   );

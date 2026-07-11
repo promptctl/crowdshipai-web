@@ -4,10 +4,12 @@ import { redirect } from 'next/navigation';
 import { ClaimChannelForm } from '@/components/ClaimChannelForm';
 import { GoLiveControl } from '@/components/GoLiveControl';
 import { MenuAuthoringForm } from '@/components/MenuAuthoringForm';
+import { OverlayStyleForm } from '@/components/OverlayStyleForm';
 import { PoolAuthoringForm } from '@/components/PoolAuthoringForm';
 import { getCatalog } from '@/data/catalog';
 import { getChannelService } from '@/server/channels';
 import { listPools } from '@/server/market-actions';
+import { overlayStyleOf } from '@/server/overlay-actions';
 import { currentPrincipal } from '@/server/principal';
 
 /**
@@ -66,6 +68,15 @@ export default async function StudioPage() {
               overlay reacts to. It’s yours: sell whatever you want.
             </p>
             <MenuAuthoringForm initialOffers={currentMenu} />
+          </section>
+          <section className="mt-12">
+            <h2 className="text-lg font-bold tracking-tight text-chalk">your overlay</h2>
+            <p className="mt-1 mb-5 max-w-xl text-sm text-fog">
+              When someone buys from your menu, the effect fires on your stream. Shape how it
+              lands — the corner, the color, how long it stays. The look is yours; we just carry
+              it.
+            </p>
+            <OverlayStyleForm initialStyle={await overlayStyleOf(channel.handle)} />
           </section>
           <section className="mt-12">
             <h2 className="text-lg font-bold tracking-tight text-chalk">funding pools</h2>

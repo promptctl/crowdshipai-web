@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   CHAT_MESSAGE_EVENT,
   EFFECT_FIRED_EVENT,
+  OVERLAY_STYLE_EVENT,
   PRESENCE_EVENT,
   SETTLEMENT_EVENT,
   STREAM_LIFECYCLE_EVENT,
   parseChatMessage,
   parseFiredEffect,
+  parseOverlayStyle,
   parseSettlement,
   parseStreamLifecycle,
   parseViewerPresence,
@@ -68,6 +70,26 @@ describe('parseFiredEffect', () => {
     expect(parseFiredEffect(noKind)).toBeNull();
     expect(parseFiredEffect(blankKind)).toBeNull();
     expect(parseFiredEffect(numberKind)).toBeNull();
+  });
+
+  it('surfaces the builder\'s words when the open params carry the CrowdShip display shape', () => {
+    const frame = JSON.stringify({
+      type: EFFECT_FIRED_EVENT,
+      at: 1,
+      payload: { effectKind: 'shoutout', params: { label: 'Shoutout', summary: 'name out loud' } },
+    });
+    expect(parseFiredEffect(frame)).toEqual({
+      effectKind: 'shoutout',
+      display: { label: 'Shoutout', summary: 'name out loud' },
+    });
+  });
+
+  it('keeps the effect but carries no display for a foreign params shape — optionality, not rejection', () => {
+    const shapes = [undefined, 'a string', ['a'], {}, { label: 'x' }, { label: 1, summary: 'y' }];
+    for (const params of shapes) {
+      const frame = JSON.stringify({ type: EFFECT_FIRED_EVENT, at: 1, payload: { effectKind: 'zap', params } });
+      expect(parseFiredEffect(frame)).toEqual({ effectKind: 'zap' });
+    }
   });
 });
 
@@ -277,5 +299,44 @@ describe('parseStreamLifecycle', () => {
     expect(parseChatMessage(live)).toBeNull();
     expect(parseViewerPresence(live)).toBeNull();
     expect(parseSettlement(live)).toBeNull();
+  });
+});
+
+/** The exact event shape the publish edge (`announceOverlayStyle`) puts on the wire:
+ *  the open style type label, a publisher-stamped `at`, and the whole style as the
+ *  payload. Built here verbatim so this test fails loudly if the two halves of the
+ *  seam ever drift apart [LAW:one-source-of-truth]. */
+const styleFrame = (payload: unknown): string =>
+  JSON.stringify({ type: OVERLAY_STYLE_EVENT, at: 1_700_000_000_000, payload });
+
+describe('parseOverlayStyle', () => {
+  const style = { placement: 'top-right', accentHue: 280, durationSeconds: 12 };
+
+  it('reads the whole restyled look from a faithful overlay-style frame', () => {
+    expect(parseOverlayStyle(styleFrame(style))).toEqual(style);
+  });
+
+  it('is null for a garbled, non-JSON frame from the wire', () => {
+    expect(parseOverlayStyle('static on the wire')).toBeNull();
+  });
+
+  it('judges the payload by the ONE style validator — an out-of-bounds style is not a style', () => {
+    expect(parseOverlayStyle(styleFrame({ ...style, accentHue: 999 }))).toBeNull();
+    expect(parseOverlayStyle(styleFrame({ ...style, placement: 'center' }))).toBeNull();
+    expect(parseOverlayStyle(styleFrame({ ...style, durationSeconds: 0 }))).toBeNull();
+    expect(parseOverlayStyle(styleFrame({}))).toBeNull();
+    expect(parseOverlayStyle(styleFrame('bottom-left'))).toBeNull();
+  });
+
+  it('does not claim its siblings’ frames, and they do not claim its', () => {
+    expect(parseOverlayStyle(firedFrame('shoutout'))).toBeNull();
+    expect(parseOverlayStyle(chatFrame('mara', 'hi'))).toBeNull();
+    expect(parseOverlayStyle(presenceFrame(3))).toBeNull();
+    const restyled = styleFrame(style);
+    expect(parseFiredEffect(restyled)).toBeNull();
+    expect(parseChatMessage(restyled)).toBeNull();
+    expect(parseViewerPresence(restyled)).toBeNull();
+    expect(parseSettlement(restyled)).toBeNull();
+    expect(parseStreamLifecycle(restyled)).toBeNull();
   });
 });

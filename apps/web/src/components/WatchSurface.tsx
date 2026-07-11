@@ -1,18 +1,21 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
 import type { FundResult, PledgeResult, SpendResult } from '@/data/buy-result';
 import type { ChatResult } from '@/data/chat-result';
-import { parseChatMessage, parseFiredEffect, parseSettlement, parseStreamLifecycle, parseViewerPresence } from '@/data/live-event';
+import { parseChatMessage, parseFiredEffect, parseOverlayStyle, parseSettlement, parseStreamLifecycle, parseViewerPresence } from '@/data/live-event';
+import type { OverlayStyle } from '@/data/overlay-style';
 import type { ChannelView, ChatMessage, PoolView, PricedOffer, SettlementEventView } from '@/data/types';
 import { sendChat } from '@/server/chat-actions';
 import { buyCoins, buyOffer, listPools, pledgeToPool, settlementEvents } from '@/server/market-actions';
+import { overlayStyleOf } from '@/server/overlay-actions';
 import { channelLive } from '@/server/stream-actions';
 
 import { BuilderAvatar } from './BuilderAvatar';
 import { Chat } from './Chat';
+import { EffectOverlay, type OverlayToast } from './EffectOverlay';
 import { Menu } from './Menu';
 import { StreamPlayer } from './StreamPlayer';
 import { StreamStage } from './StreamStage';
@@ -180,6 +183,7 @@ export function WatchSurface({
   initialViewerCount,
   initialPools,
   initialSettlement,
+  initialOverlayStyle,
   signedIn,
 }: {
   readonly channel: ChannelView;
@@ -197,6 +201,11 @@ export function WatchSurface({
    *  reconnected) reads the same durable money story as one who watched it happen
    *  [LAW:one-source-of-truth]. Kept live below by re-reading on settlement nudges. */
   readonly initialSettlement: readonly SettlementEventView[];
+  /** The builder's overlay style at first paint, read from its one authoritative
+   *  store at the server edge [LAW:one-source-of-truth]. The surface keeps it live
+   *  below: style frames restyle it the moment the builder saves, and every
+   *  subscription (re)open re-reads the store, so an attach-gap miss converges. */
+  readonly initialOverlayStyle: OverlayStyle;
   /** Whether a live session backs this view — the chat input is a courtesy gate on
    *  it; the send action is the real authenticator [LAW:single-enforcer]. */
   readonly signedIn: boolean;
@@ -217,6 +226,20 @@ export function WatchSurface({
   // frame leaves the badge a beat stale, never a second authority
   // [LAW:one-source-of-truth].
   const [isLive, setIsLive] = useState(stream.isLive);
+  // The builder's overlay style, seeded from the store's reading at the edge and kept
+  // live by style frames (each carries the style whole — presence's self-correcting
+  // shape) plus a re-read on every subscription (re)open. The store stays the one
+  // authority; this state only mirrors it [LAW:one-source-of-truth].
+  const [overlayStyle, setOverlayStyle] = useState(initialOverlayStyle);
+  // Fired effects standing on the stream right now. This surface owns WHICH toasts
+  // exist (it routes the frames); the overlay renderer owns WHEN one has aged out and
+  // hands the expiry back here — one owner per concern
+  // [LAW:no-ambient-temporal-coupling].
+  const [toasts, setToasts] = useState<readonly OverlayToast[]>([]);
+  const expireToasts = useCallback(
+    (ids: readonly string[]) => setToasts((prev) => prev.filter((t) => !ids.includes(t.id))),
+    [],
+  );
   // null === no wallet (logged-out). A real absence the surface renders as "sign in",
   // never a zero balance that would imply an empty account they do not have.
   const [balance, setBalance] = useState<number | null>(initialBalance);
@@ -260,6 +283,12 @@ export function WatchSurface({
       channelLive(stream.slug)
         .then(setIsLive)
         .catch((error: unknown) => console.warn('Liveness re-read failed; badge may lag until the next frame.', error));
+      // The overlay style converges the same way the badge does: a style frame
+      // published during an attach gap is gone forever, so every (re)open re-reads
+      // the style's one authority [LAW:one-source-of-truth].
+      overlayStyleOf(stream.slug)
+        .then(setOverlayStyle)
+        .catch((error: unknown) => console.warn('Overlay style re-read failed; look may lag until the next frame.', error));
     };
     const refreshMoney = () => {
       const seq = (moneyReadSeq.current += 1);
@@ -285,6 +314,15 @@ export function WatchSurface({
       const fired = parseFiredEffect(e.data);
       if (fired !== null) {
         setMessages((prev) => [...prev, { id: mintId('live'), author: '', text: '', firedEffectKind: fired.effectKind }]);
+        // The same firing also lands ON the stream: one frame, two renderings — the
+        // chat line for the log, the toast for the moment. The toast carries the
+        // builder's words off the frame's open params and the instant it fired; its
+        // residency is judged against the style current WHEN SHOWN, so a mid-stream
+        // restyle applies to standing toasts too [LAW:one-source-of-truth].
+        setToasts((prev) => [
+          ...prev,
+          { id: mintId('toast'), effectKind: fired.effectKind, firedAtMs: Date.now(), ...(fired.display === undefined ? {} : { display: fired.display }) },
+        ]);
         return;
       }
       const chat = parseChatMessage(e.data);
@@ -326,6 +364,14 @@ export function WatchSurface({
       const lifecycle = parseStreamLifecycle(e.data);
       if (lifecycle !== null) {
         setIsLive(lifecycle.phase === 'live');
+        return;
+      }
+      // A style frame restyles the overlay the moment the builder saves — the frame
+      // carries the style whole, already judged by the one validator, so applying it
+      // is a replacement, never an accumulation [LAW:dataflow-not-control-flow].
+      const style = parseOverlayStyle(e.data);
+      if (style !== null) {
+        setOverlayStyle(style);
       }
     };
     return () => source.close();
@@ -417,7 +463,15 @@ export function WatchSurface({
             isLive={isLive}
             viewerCount={viewerCount}
             size="stage"
-            overlay={<StreamPlayer slug={stream.slug} />}
+            overlay={
+              // Painted back-to-front inside the stage: the live video first, then
+              // the builder-styled effect overlay above it — fired effects land ON
+              // the stream, in the look the builder authored.
+              <>
+                <StreamPlayer slug={stream.slug} />
+                <EffectOverlay style={overlayStyle} toasts={toasts} onExpire={expireToasts} />
+              </>
+            }
           />
           <div className="mt-4 flex items-start gap-3">
             <BuilderAvatar accentHue={stream.accentHue} className="h-11 w-11" />
