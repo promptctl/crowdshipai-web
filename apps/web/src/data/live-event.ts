@@ -95,15 +95,23 @@ export interface ViewerPresence {
 /**
  * A settlement moment as it arrives off the wire: which pool's money moved (so the
  * watcher re-reads that channel's settlement feed — the frame nudges, the ledger
- * answers [LAW:one-source-of-truth]), and, when the movement was the pool SHIPPING,
- * the recorded split — the builder's share and the platform's cut, both real ledger
- * legs carried whole for the one chat line the audience sees the instant it happens.
- * `shipped` is honest optionality [LAW:dataflow-not-control-flow]: a contribution
- * nudges the feed but is not a ship, so it carries no split.
+ * answers [LAW:one-source-of-truth]), and, when the movement SETTLED the pool, the one
+ * broadcast line the audience sees the instant it happens. A pool settles exactly one
+ * way — FORWARD to the builder (`shipped`, carrying the recorded release and cut legs)
+ * or BACK to its backers (`refunded`, carrying the recorded total returned) — so the
+ * two are one discriminated arm, never two optional blocks whose illegal both-present
+ * frame would be representable [LAW:types-are-the-program]. `settled` itself is honest
+ * optionality [LAW:dataflow-not-control-flow]: a contribution nudges the feed but
+ * settles nothing, so it carries no arm. Every figure is a real ledger leg carried
+ * whole; this frame derives nothing.
  */
+export type SettledMoment =
+  | { readonly kind: 'shipped'; readonly releasedCoins: number; readonly cutCoins: number }
+  | { readonly kind: 'refunded'; readonly refundedCoins: number };
+
 export interface SettlementMoment {
   readonly poolTitle: string;
-  readonly shipped?: { readonly releasedCoins: number; readonly cutCoins: number };
+  readonly settled?: SettledMoment;
 }
 
 /** A record we can index after proving the parsed value is a non-null object. */
@@ -192,34 +200,50 @@ export function parseViewerPresence(raw: string): ViewerPresence | null {
   return { count };
 }
 
-/** A positive whole coin figure off the wire, or null — a released share or a cut is
- *  always at least one coin (the engine's split invariant), so anything else in a
- *  shipped frame is a garbled frame, not a smaller settlement. */
+/** A positive whole coin figure off the wire, or null — a released share, a cut, or a
+ *  refunded total is always at least one coin (the engines never post a zero leg), so
+ *  anything else in a settled frame is a garbled frame, not a smaller settlement. */
 const parseCoinFigure = (v: unknown): number | null =>
   typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null;
+
+/** The settled arm of a settlement frame, proven from `unknown` — one place decides
+ *  which discriminants exist on this wire, exhaustively [LAW:single-enforcer]. A block
+ *  with an unknown kind or a non-coin figure is a garbled frame, resolved to `null`. */
+const parseSettledMoment = (settled: unknown): SettledMoment | null => {
+  if (!isObject(settled)) return null;
+  if (settled.kind === 'shipped') {
+    const releasedCoins = parseCoinFigure(settled.releasedCoins);
+    const cutCoins = parseCoinFigure(settled.cutCoins);
+    if (releasedCoins === null || cutCoins === null) return null;
+    return { kind: 'shipped', releasedCoins, cutCoins };
+  }
+  if (settled.kind === 'refunded') {
+    const refundedCoins = parseCoinFigure(settled.refundedCoins);
+    if (refundedCoins === null) return null;
+    return { kind: 'refunded', refundedCoins };
+  }
+  return null;
+};
 
 /**
  * Parse one raw SSE `data:` frame into a {@link SettlementMoment}, or `null` when the
  * frame is not one — the sibling of the parsers above, reading the same wire trust
  * boundary the same way. A frame of another type, a payload missing its pool title, or
- * a `shipped` block whose figures are not positive whole coin counts all resolve to
+ * a `settled` block that is not a well-formed shipped/refunded arm all resolve to
  * `null`: not this build's settlement moment, never a swallowed error
- * [LAW:no-silent-failure]. A well-formed frame WITHOUT `shipped` is a real moment — a
- * contribution or refund nudging the watcher to re-read the durable feed.
+ * [LAW:no-silent-failure]. A well-formed frame WITHOUT `settled` is a real moment — a
+ * contribution nudging the watcher to re-read the durable feed.
  */
 export function parseSettlement(raw: string): SettlementMoment | null {
   const frame = decodeFrame(raw);
   if (frame === null || frame.type !== SETTLEMENT_EVENT) return null;
   if (!isObject(frame.payload)) return null;
 
-  const { poolTitle, shipped } = frame.payload;
+  const { poolTitle, settled } = frame.payload;
   if (typeof poolTitle !== 'string' || poolTitle.length === 0) return null;
-  if (shipped === undefined) return { poolTitle };
+  if (settled === undefined) return { poolTitle };
 
-  if (!isObject(shipped)) return null;
-  const releasedCoins = parseCoinFigure(shipped.releasedCoins);
-  const cutCoins = parseCoinFigure(shipped.cutCoins);
-  if (releasedCoins === null || cutCoins === null) return null;
-
-  return { poolTitle, shipped: { releasedCoins, cutCoins } };
+  const moment = parseSettledMoment(settled);
+  if (moment === null) return null;
+  return { poolTitle, settled: moment };
 }

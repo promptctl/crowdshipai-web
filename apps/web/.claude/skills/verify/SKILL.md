@@ -24,8 +24,11 @@ use it rather than hand-rolling a launcher.
 ## Proven flow recipes (selectors verified 2026-07)
 
 - **Account**: `/signup`, fill `input[name=email]` / `input[name=password]`,
-  click button `create account`, wait for `**/account` (fallback: `/login`,
-  button `log in`). Copy `ensureAccount` from either acceptance spec.
+  click button `create account`. Judge success by the header's session-aware
+  `log out` **button** becoming visible — NOT by `waitForURL('**/account')`,
+  which races first-hit dev compiles and flakes. Copy `ensureAccount` from
+  `settlement-acceptance.spec.ts` (2026-07 version): it also obeys the auth
+  rate limiter's advertised "Please wait Ns" and retries.
 - **Channel**: `/studio`, fill `input[name=handle]` / `input[name=displayName]`,
   click `claim channel`, wait for button `go live`.
 - **Open a pool**: on `/studio`, fill `input[name=title]` / `input[name=target]`,
@@ -51,3 +54,10 @@ use it rather than hand-rolling a launcher.
   bare `getByText`.
 - The in-memory economy resets when the dev server restarts; specs must create
   their own world (fresh handle per run: `` `x_${Date.now()}` ``).
+- The auth edges rate-limit scrypt attempts **per IP** (10/30s sliding), and
+  every spec account comes from 127.0.0.1 — back-to-back tests minting several
+  accounts can trip it. Signup discloses "Too many attempts. Please wait Ns";
+  login stays silent ("Invalid email or password" covers throttle too). Obey
+  the advertised wait and retry; never widen the app's limits for a test.
+- `CANCELLED`/`SHIPPED` pool badges and their broadcast chat lines both carry
+  the marker text — same `toHaveCount(n)` discipline as SHIPPED.

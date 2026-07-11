@@ -74,7 +74,10 @@ export type PledgeResult =
   | { readonly kind: 'invalid-pledge' }
   /** No live session — a viewer must be signed in to pledge. */
   | { readonly kind: 'must-authenticate' }
-  /** The pool id names no open pool — it may have been cancelled. */
+  /** The builder cancelled this pool — no coins moved. The carried view lets a stale
+   *  surface catch the pool up to how it now stands [LAW:one-source-of-truth]. */
+  | { readonly kind: 'pool-cancelled'; readonly pool: PoolView }
+  /** The pool id names no pool at all. */
   | { readonly kind: 'no-such-pool' };
 
 /**
@@ -89,3 +92,33 @@ export type PoolOpenResult =
   | { readonly kind: 'no-channel' }
   /** The target amount is zero, negative, or not a safe integer. */
   | { readonly kind: 'invalid-target' };
+
+/**
+ * The outcome of a builder cancelling their funding pool from the studio — the surface
+ * twin of the market's `CancelOutcome`, projected to serializable primitives
+ * [LAW:effects-at-boundaries]. The two `cancelled-*` arms preserve the money truth a
+ * builder must see plainly: coins went back to backers on this act, or there were none
+ * pooled to return — never one blurred "cancelled" [LAW:no-silent-failure].
+ */
+export type PoolCancelResult =
+  /** The pool closed and its escrow refunded — `refundedCoins` is the total of the
+   *  ledger's recorded refund legs, read back from the settlement feed, never re-derived
+   *  [LAW:one-source-of-truth]. */
+  | { readonly kind: 'cancelled-refunded'; readonly pool: PoolView; readonly refundedCoins: number }
+  /** The pool closed with an empty escrow — nothing was owed back. */
+  | { readonly kind: 'cancelled-empty'; readonly pool: PoolView }
+  /** A replay: the pool was already cancelled. Nothing changed. */
+  | { readonly kind: 'already-cancelled'; readonly pool: PoolView }
+  /** The pool already shipped — the builder is paid; there is nothing to cancel. */
+  | { readonly kind: 'already-released'; readonly pool: PoolView }
+  /** The rail refused the refund (a release raced this cancel) — the pool is NOT
+   *  cancelled; the loud reconciliation case [LAW:no-silent-failure]. */
+  | { readonly kind: 'cancel-refused' }
+  /** The pool belongs to another builder's channel. */
+  | { readonly kind: 'not-your-pool' }
+  /** The pool id names no pool at all. */
+  | { readonly kind: 'no-such-pool' }
+  /** The authenticated principal does not own a channel. */
+  | { readonly kind: 'no-channel' }
+  /** No live session — only a signed-in builder can cancel a pool. */
+  | { readonly kind: 'must-authenticate' };

@@ -68,9 +68,15 @@ importers:
       '@crowdship/rate-limit':
         specifier: workspace:*
         version: link:../../packages/rate-limit
+      '@crowdship/refund':
+        specifier: workspace:*
+        version: link:../../services/refund
       '@crowdship/release':
         specifier: workspace:*
         version: link:../../services/release
+      '@crowdship/settlement':
+        specifier: workspace:*
+        version: link:../../packages/settlement
       '@crowdship/settlement-feed':
         specifier: workspace:*
         version: link:../../services/settlement-feed

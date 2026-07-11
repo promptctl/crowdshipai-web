@@ -79,6 +79,14 @@ const pledgeDelta = (r: PledgeResult): Delta => {
       return { notice: { tone: 'error', text: 'This pledge could not be routed.' } };
     case 'must-authenticate':
       return { notice: { tone: 'info', text: 'Sign in to pledge coins.' } };
+    case 'pool-cancelled':
+      // No coins moved; the carried view catches this surface up to the pool as it now
+      // stands, so the card stops inviting pledges the market will refuse
+      // [LAW:one-source-of-truth].
+      return {
+        poolUpdated: r.pool,
+        notice: { tone: 'warn', text: 'The builder cancelled this pool — pledges were refunded.' },
+      };
     case 'no-such-pool':
       return { notice: { tone: 'error', text: 'That pool is no longer available.' } };
   }
@@ -266,24 +274,22 @@ export function WatchSurface({
         return;
       }
       // A settlement frame: money moved against one of this builder's pools. Always a
-      // nudge to re-read the durable projection; additionally the one SHIPPED line the
-      // audience sees the moment a pool settles, rendered from the frame's recorded
-      // figures — the same broadcast for every watcher, tipping backer included
-      // [LAW:one-source-of-truth].
+      // nudge to re-read the durable projection; additionally the one broadcast line the
+      // audience sees the moment a pool settles — SHIPPED forward to the builder or
+      // REFUNDED back to its backers, the failure mode shown as plainly as the success —
+      // rendered from the frame's recorded figures, the same broadcast for every watcher
+      // [LAW:one-source-of-truth]. The settled arm maps to its line kind by its
+      // discriminant, one shape per arm [LAW:dataflow-not-control-flow].
       const settled = parseSettlement(e.data);
       if (settled !== null) {
         refreshMoney();
-        if (settled.shipped !== undefined) {
-          const shipped = settled.shipped;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: mintId('settlement'),
-              author: '',
-              text: '',
-              settledPool: { title: settled.poolTitle, releasedCoins: shipped.releasedCoins, cutCoins: shipped.cutCoins },
-            },
-          ]);
+        const moment = settled.settled;
+        if (moment !== undefined) {
+          const line =
+            moment.kind === 'shipped'
+              ? { settledPool: { title: settled.poolTitle, releasedCoins: moment.releasedCoins, cutCoins: moment.cutCoins } }
+              : { refundedPool: { title: settled.poolTitle, refundedCoins: moment.refundedCoins } };
+          setMessages((prev) => [...prev, { id: mintId('settlement'), author: '', text: '', ...line }]);
         }
         return;
       }
@@ -543,6 +549,11 @@ function PoolCard({
             SHIPPED
           </span>
         )}
+        {pool.cancelled && (
+          <span className="shrink-0 rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-semibold text-fog">
+            CANCELLED
+          </span>
+        )}
       </div>
       <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface">
         <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${pct}%` }} />
@@ -550,7 +561,7 @@ function PoolCard({
       <p className="mt-1 text-[11px] text-fog">
         ◎ {pool.pooledCoins.toLocaleString('en-US')} / {pool.targetCoins.toLocaleString('en-US')}
       </p>
-      {!pool.released && (
+      {!pool.released && !pool.cancelled && (
         <div className="mt-2 flex gap-1">
           {PLEDGE_AMOUNTS.map((amount) => (
             <button

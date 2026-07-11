@@ -5,13 +5,18 @@ import type { SettlementEvent } from '@crowdship/settlement-feed';
 import { timestamp } from '@crowdship/std';
 import { describe, expect, it } from 'vitest';
 
+import { poolId } from '@crowdship/pool';
+
 import {
   coinPurchaseAmount,
+  toCancelResult,
   toFundResult,
+  toPoolView,
   toSettlementView,
   toSpendResult,
   type SettlementPartyLabels,
 } from '../src/server/buy-mapping';
+import type { CancelOutcome, FeaturePoolView } from '../src/server/market';
 
 // The mappers read only the discriminant (and, for charge-refused, the ledger
 // error kind); fabricating outcomes with just those fields keeps the test on the
@@ -159,5 +164,67 @@ describe('toSettlementView — a projected settlement event crossed to the surfa
       labels,
     );
     expect(view).toMatchObject({ kind: 'refund', party: 'label-of:wallet:ben', pooledAfterCoins: 0 });
+  });
+});
+
+const featurePool = (over: Partial<FeaturePoolView> = {}): FeaturePoolView => ({
+  id: must(poolId('pool:ffmpeg-witch:add HDR')),
+  title: 'add HDR',
+  builderSlug: 'ffmpeg-witch',
+  target: 200n,
+  pooled: 0n,
+  released: false,
+  cancelled: true,
+  ...over,
+});
+
+// The cancel mapper reads the outcome discriminants and the pool view; the refund arms
+// it destructures carry receipts the mapper never touches, so those are fabricated to
+// keep the test on the projection contract [LAW:behavior-not-structure].
+const cancelled = (refundKind: 'refunded' | 'nothing-to-refund' | 'already-refunded'): CancelOutcome =>
+  ({ kind: 'cancelled', refund: { kind: refundKind }, pool: featurePool() }) as unknown as CancelOutcome;
+
+describe('toCancelResult — the builder’s cancel outcome projected to the studio surface', () => {
+  it('reports a fresh refund with the recorded total the caller read from the ledger', () => {
+    const result = toCancelResult(cancelled('refunded'), 50);
+    expect(result).toMatchObject({ kind: 'cancelled-refunded', refundedCoins: 50 });
+    if (result.kind !== 'cancelled-refunded') throw new Error('unreachable');
+    expect(result.pool).toMatchObject({ id: 'pool:ffmpeg-witch:add HDR', cancelled: true, targetCoins: 200 });
+  });
+
+  it('halts loudly on a fresh refund arriving without its recorded total — never a ◎ 0 money line', () => {
+    expect(() => toCancelResult(cancelled('refunded'), null)).toThrow(/no recorded refund total/);
+  });
+
+  it('reports an empty pool’s cancel as cancelled-empty — closed, nothing owed back', () => {
+    expect(toCancelResult(cancelled('nothing-to-refund'), null).kind).toBe('cancelled-empty');
+  });
+
+  it('reports a replayed money act as already-cancelled — nothing newly happened', () => {
+    expect(toCancelResult(cancelled('already-refunded'), null).kind).toBe('already-cancelled');
+    expect(toCancelResult({ kind: 'already-cancelled', pool: featurePool() }, null).kind).toBe('already-cancelled');
+  });
+
+  it('keeps the refusals distinct: shipped, foreign, missing, and a rail-refused refund', () => {
+    expect(toCancelResult({ kind: 'already-released', pool: featurePool({ released: true, cancelled: false }) }, null).kind).toBe('already-released');
+    expect(toCancelResult({ kind: 'not-your-pool', pool: featurePool({ cancelled: false }) }, null).kind).toBe('not-your-pool');
+    expect(toCancelResult({ kind: 'no-such-pool' }, null).kind).toBe('no-such-pool');
+    expect(
+      toCancelResult({ kind: 'refund-refused', error: { kind: 'would-overdraft' } as never }, null).kind,
+    ).toBe('cancel-refused');
+  });
+});
+
+describe('toPoolView — the domain pool view crossed to the surface as primitives', () => {
+  it('projects brands and bigints losslessly, cancellation included', () => {
+    expect(toPoolView(featurePool({ pooled: 30n }))).toEqual({
+      id: 'pool:ffmpeg-witch:add HDR',
+      title: 'add HDR',
+      builderSlug: 'ffmpeg-witch',
+      targetCoins: 200,
+      pooledCoins: 30,
+      released: false,
+      cancelled: true,
+    });
   });
 });

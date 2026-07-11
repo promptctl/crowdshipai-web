@@ -180,9 +180,9 @@ describe('the sibling parsers stay in their lanes', () => {
 });
 
 /** The exact frame the publish edge (`announceSettlement`) puts on the wire — a nudge
- *  naming the pool, plus the recorded split when the movement shipped it. Built here
- *  verbatim so this test fails loudly if the two halves of the seam ever drift
- *  [LAW:one-source-of-truth]. */
+ *  naming the pool, plus the recorded settled arm when the movement settled it: shipped
+ *  forward or refunded back. Built here verbatim so this test fails loudly if the two
+ *  halves of the seam ever drift [LAW:one-source-of-truth]. */
 const settlementFrame = (payload: unknown): string =>
   JSON.stringify({ type: SETTLEMENT_EVENT, at: 1_700_000_000_000, payload });
 
@@ -193,8 +193,16 @@ describe('parseSettlement', () => {
 
   it('reads a shipped moment with the recorded release and cut figures', () => {
     expect(
-      parseSettlement(settlementFrame({ poolTitle: 'add HDR', shipped: { releasedCoins: 54, cutCoins: 6 } })),
-    ).toEqual({ poolTitle: 'add HDR', shipped: { releasedCoins: 54, cutCoins: 6 } });
+      parseSettlement(
+        settlementFrame({ poolTitle: 'add HDR', settled: { kind: 'shipped', releasedCoins: 54, cutCoins: 6 } }),
+      ),
+    ).toEqual({ poolTitle: 'add HDR', settled: { kind: 'shipped', releasedCoins: 54, cutCoins: 6 } });
+  });
+
+  it('reads a refunded moment with the recorded returned total — the failure mode is a first-class frame', () => {
+    expect(
+      parseSettlement(settlementFrame({ poolTitle: 'add HDR', settled: { kind: 'refunded', refundedCoins: 50 } })),
+    ).toEqual({ poolTitle: 'add HDR', settled: { kind: 'refunded', refundedCoins: 50 } });
   });
 
   it('is null for a garbled, non-JSON frame from the wire', () => {
@@ -207,19 +215,24 @@ describe('parseSettlement', () => {
     expect(parseSettlement(settlementFrame({ poolTitle: 7 }))).toBeNull();
   });
 
-  it('is null when a shipped block is present but its figures are not positive whole coin counts', () => {
-    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: { releasedCoins: 0, cutCoins: 6 } }))).toBeNull();
-    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: { releasedCoins: 54, cutCoins: -6 } }))).toBeNull();
-    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: { releasedCoins: 5.4, cutCoins: 6 } }))).toBeNull();
-    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: { cutCoins: 6 } }))).toBeNull();
-    expect(parseSettlement(settlementFrame({ poolTitle: 't', shipped: 'yes' }))).toBeNull();
+  it('is null when a settled block is present but malformed — an unknown kind or a non-coin figure', () => {
+    const bad = (settled: unknown) => parseSettlement(settlementFrame({ poolTitle: 't', settled }));
+    expect(bad({ kind: 'shipped', releasedCoins: 0, cutCoins: 6 })).toBeNull();
+    expect(bad({ kind: 'shipped', releasedCoins: 54, cutCoins: -6 })).toBeNull();
+    expect(bad({ kind: 'shipped', releasedCoins: 5.4, cutCoins: 6 })).toBeNull();
+    expect(bad({ kind: 'shipped', cutCoins: 6 })).toBeNull();
+    expect(bad({ kind: 'refunded', refundedCoins: 0 })).toBeNull();
+    expect(bad({ kind: 'refunded', refundedCoins: 'all of it' })).toBeNull();
+    expect(bad({ kind: 'refunded' })).toBeNull();
+    expect(bad({ kind: 'evaporated', coins: 5 })).toBeNull();
+    expect(bad('yes')).toBeNull();
   });
 
   it('does not claim its siblings’ frames, and they do not claim its', () => {
     expect(parseSettlement(firedFrame('shoutout'))).toBeNull();
     expect(parseSettlement(chatFrame('mara', 'hi'))).toBeNull();
     expect(parseSettlement(presenceFrame(3))).toBeNull();
-    const shipped = settlementFrame({ poolTitle: 't', shipped: { releasedCoins: 54, cutCoins: 6 } });
+    const shipped = settlementFrame({ poolTitle: 't', settled: { kind: 'shipped', releasedCoins: 54, cutCoins: 6 } });
     expect(parseFiredEffect(shipped)).toBeNull();
     expect(parseChatMessage(shipped)).toBeNull();
     expect(parseViewerPresence(shipped)).toBeNull();

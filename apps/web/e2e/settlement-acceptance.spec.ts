@@ -23,22 +23,53 @@ const PASSWORD = 'password1';
 // Sign-up auto-logs-in and redirects to /account; if that arm instead returns the
 // "please log in" notice, fall back to an explicit login — same discipline as the demo
 // acceptance spec. Either way the page ends authenticated.
+//
+// The auth edges rate-limit scrypt-bearing attempts per IP (a deliberate production
+// posture), and every account this suite mints comes from 127.0.0.1 — so back-to-back
+// tests can trip the window. The signup arm ADVERTISES its retry-after ("Please wait
+// Ns"); this helper obeys exactly that advertised backpressure and tries again, rather
+// than failing on the app behaving as designed [LAW:no-ambient-temporal-coupling]: the
+// wait is the server's own figure, never a magic sleep.
 const ensureAccount = async (page: Page, email: string): Promise<void> => {
-  await page.goto('/signup');
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(PASSWORD);
-  await page.getByRole('button', { name: 'create account' }).click();
-  await Promise.race([
-    page.waitForURL('**/account', { timeout: 15_000 }).catch(() => undefined),
-    page.getByRole('alert').waitFor({ state: 'visible', timeout: 15_000 }).catch(() => undefined),
-  ]);
-  if (!page.url().includes('/account')) {
+  // The signed-in truth is the header's session-aware "log out" — rendered from the
+  // real session, so it cannot race a redirect the way URL matching does (a first-hit
+  // dev compile can hold the /account navigation past any fixed URL wait)
+  // [LAW:one-source-of-truth].
+  const loggedOut = page.getByRole('button', { name: 'log out' });
+  const settle = async (): Promise<boolean> => {
+    await Promise.race([
+      loggedOut.waitFor({ state: 'visible', timeout: 30_000 }).catch(() => undefined),
+      page.getByRole('alert').waitFor({ state: 'visible', timeout: 30_000 }).catch(() => undefined),
+    ]);
+    return loggedOut.isVisible().catch(() => false);
+  };
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await page.goto('/signup');
+    await page.locator('input[name="email"]').fill(email);
+    await page.locator('input[name="password"]').fill(PASSWORD);
+    await page.getByRole('button', { name: 'create account' }).click();
+    if (await settle()) return;
+
+    const notice = (await page.getByRole('alert').textContent().catch(() => null)) ?? '';
+    const throttled = notice.match(/wait (\d+)s/);
+    if (throttled !== null) {
+      await page.waitForTimeout((Number(throttled[1]) + 1) * 1000);
+      continue;
+    }
+
+    // "Account created — please log in" (a throttled auto-login) or "already
+    // registered" (a retried signup): the account exists, log in explicitly.
     await page.goto('/login');
     await page.locator('input[name="email"]').fill(email);
     await page.locator('input[name="password"]').fill(PASSWORD);
     await page.getByRole('button', { name: 'log in' }).click();
-    await page.waitForURL('**/account', { timeout: 20_000 });
+    if (await settle()) return;
+    // Login refuses with one silent message for both bad credentials and a tripped
+    // throttle; the credentials here are known-good, so wait one window and retry.
+    await page.waitForTimeout(11_000);
   }
+  throw new Error(`could not authenticate ${email} within the rate-limit budget`);
 };
 
 const claimChannel = async (page: Page, handle: string, displayName: string): Promise<void> => {
@@ -140,6 +171,94 @@ test('the settlement feed moves in view of the stream: a passive viewer watches 
     // channel's — gone on reload, exactly as a live-not-history channel promises.
     await expect(viewer.getByText('SHIPPED', { exact: true })).toHaveCount(1, { timeout: 15_000 });
     await viewer.screenshot({ path: 'test-results/settlement-evidence/viewer-after-reload.png', fullPage: true });
+  } finally {
+    await builderCtx.close();
+    await backerCtx.close();
+    await viewerCtx.close();
+  }
+});
+
+// The refund path's arithmetic, stated once: a 100-coin pledge into a 200-coin target
+// leaves the pool unmet; cancelling it returns exactly the 100 pledged coins.
+const REFUND_TARGET = '200';
+const PLEDGED = '100';
+
+test('crowdshipai-settlement-e5a.11: a cancelled pool refunds its backers in view of the stream', async ({
+  browser,
+}) => {
+  const run = Date.now();
+  const handle = `refundr_${run}`;
+  const title = `Doomed feature ${run}`;
+
+  const builderCtx = await browser.newContext();
+  const backerCtx = await browser.newContext();
+  const viewerCtx = await browser.newContext();
+  const builder = await builderCtx.newPage();
+  const backer = await backerCtx.newPage();
+  const viewer = await viewerCtx.newPage();
+
+  try {
+    // (1) A builder claims a channel and opens a funding pool from the studio.
+    await ensureAccount(builder, `refundr-builder-${run}@example.com`);
+    await claimChannel(builder, handle, `Refundr ${run}`);
+    await builder.locator('input[name="title"]').fill(title);
+    await builder.locator('input[name="target"]').fill(REFUND_TARGET);
+    await builder.getByRole('button', { name: 'Open Pool' }).click();
+    await expect(builder.getByText(`Pool "${title}" opened`)).toBeVisible({ timeout: 15_000 });
+
+    // (2) A passive viewer opens the watch page FIRST — the refund must reach them
+    // over the live channel, not from anything they did.
+    await viewer.goto(`/watch/${handle}`);
+    await expect(viewer.getByText(title)).toBeVisible({ timeout: 15_000 });
+
+    // (3) A backer funds a wallet and pledges — the pool stays short of its target.
+    await ensureAccount(backer, `refundr-backer-${run}@example.com`);
+    await backer.goto(`/watch/${handle}`);
+    await backer.getByRole('button', { name: '+2,000' }).click();
+    await expect(backer.getByText(/◎\s*2,000/).first()).toBeVisible({ timeout: 15_000 });
+    await backer.getByRole('button', { name: `+${PLEDGED}`, exact: true }).click();
+    await expect(backer.getByText(`Pledged — ◎ ${PLEDGED} / ${REFUND_TARGET} pooled.`)).toBeVisible({
+      timeout: 15_000,
+    });
+    // The backer's wallet is down by the pledge: 2,000 − 100 = 1,900.
+    await expect(backer.getByText(/◎\s*1,900/).first()).toBeVisible({ timeout: 15_000 });
+
+    // (4) The builder cancels the pool from the studio and sees the refunded total —
+    // the ledger's own recorded refund legs, not a client tally.
+    await builder.getByRole('button', { name: 'Cancel pool — refund backers' }).click();
+    await expect(
+      builder.getByText(`Pool "${title}" cancelled — ◎ ${PLEDGED} refunded to its backers.`),
+    ).toBeVisible({ timeout: 15_000 });
+
+    // (5) Every watcher sees the failure mode as plainly as a ship: the broadcast
+    // REFUNDED line with the recorded total, the timeline's refund entry under the
+    // backer's public pseudonym, and the pool card flipping to CANCELLED.
+    for (const page of [viewer, backer]) {
+      await expect(page.getByText(new RegExp(`◎ ${PLEDGED} to the backers`))).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText(`− ◎ ${PLEDGED}`)).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText(/refunded to/)).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText('CANCELLED', { exact: true })).toBeVisible({ timeout: 15_000 });
+    }
+
+    // (6) The backer is made whole — the wallet re-reads 2,000 from the ledger on the
+    // next money action; the durable proof is the timeline, and the coins themselves:
+    // reload and the authoritative balance shows the pledge returned.
+    await backer.reload();
+    await expect(backer.getByText(/◎\s*2,000/).first()).toBeVisible({ timeout: 15_000 });
+
+    // The money moment, captured: the passive viewer's page after the refund.
+    await viewer.screenshot({ path: 'test-results/settlement-evidence/viewer-at-refund.png', fullPage: true });
+
+    // (7) Durability: reload the passive viewer. The REFUNDED chat line was the live
+    // channel's (gone, as live-not-history promises); the timeline's refund entry and
+    // the CANCELLED badge re-render from the ledger and registry — and the card no
+    // longer invites pledges the market would refuse.
+    await viewer.reload();
+    await expect(viewer.getByText(`− ◎ ${PLEDGED}`)).toBeVisible({ timeout: 15_000 });
+    await expect(viewer.getByText(/refunded to/)).toBeVisible({ timeout: 15_000 });
+    await expect(viewer.getByText('CANCELLED', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(viewer.getByRole('button', { name: `+${PLEDGED}`, exact: true })).toHaveCount(0);
+    await viewer.screenshot({ path: 'test-results/settlement-evidence/viewer-after-refund-reload.png', fullPage: true });
   } finally {
     await builderCtx.close();
     await backerCtx.close();

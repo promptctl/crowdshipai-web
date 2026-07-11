@@ -2,12 +2,13 @@
 
 import { poolId as makePoolId } from '@crowdship/pool';
 
-import type { FundResult, PledgeResult, PoolOpenResult, SpendResult } from '../data/buy-result';
+import type { FundResult, PledgeResult, PoolCancelResult, PoolOpenResult, SpendResult } from '../data/buy-result';
 import type { PoolView, SettlementEventView } from '../data/types';
 import { getCatalog } from '../data/catalog';
 import { chatAuthorLabel } from '../data/chat';
 import {
   coinPurchaseAmount,
+  toCancelResult,
   toFundResult,
   toPledgeResult,
   toPoolView,
@@ -19,6 +20,7 @@ import { getChannelService } from './channels';
 import { announceEffectFired, announceSettlement } from './live-feed';
 import {
   backerPrincipalIdOf,
+  cancelFeaturePool,
   channelSettlementFeed,
   coinBalanceOf,
   creditCoins,
@@ -27,6 +29,7 @@ import {
   pledgeToFeaturePool,
   settlementFeedOfPool,
   spendOnOffer,
+  type CancelOutcome,
   type PledgeOutcome,
 } from './market';
 import { currentPrincipal } from './principal';
@@ -192,6 +195,12 @@ export async function pledgeToPool(
     return { kind: 'no-such-pool' };
   }
 
+  // A cancelled pool refuses the pledge before any coin moves — the market's typed arm,
+  // carried to the surface so a stale page catches up to the pool as it now stands.
+  if (outcome.kind === 'pool-cancelled') {
+    return { kind: 'pool-cancelled', pool: toPoolView(outcome.pool) };
+  }
+
   // The settlement MOVING is the moment the audience sees it — the money twin of the
   // fired-effect announce above, best-effort live fan-out downstream of already-committed
   // coins that can never change the backer's result [LAW:one-source-of-truth]. A genuine
@@ -211,7 +220,7 @@ export async function pledgeToPool(
     }
     await announceSettlement(outcome.pool.builderSlug, {
       poolTitle: outcome.pool.title,
-      shipped: { releasedCoins: Number(release.amount), cutCoins: Number(cut.amount) },
+      settled: { kind: 'shipped', releasedCoins: Number(release.amount), cutCoins: Number(cut.amount) },
     });
   } else if (outcome.contribution.kind === 'contributed') {
     await announceSettlement(outcome.pool.builderSlug, { poolTitle: outcome.pool.title });
@@ -240,4 +249,54 @@ export async function openPool(title: string, targetCoins: number): Promise<Pool
 
   const view = await openFeaturePool(channel.handle, title.trim(), target);
   return { kind: 'opened', pool: toPoolView(view) };
+}
+
+/**
+ * A builder cancels their funding pool from the studio: whatever the escrow still owes
+ * goes back to the backers who pledged it, and the pool closes to further pledges. The
+ * refund is the self-settling obligation's failure mode exercised in view of everyone
+ * — the same discipline as `pledgeToPool`'s release: the money act commits first at the
+ * market seam, then the live channel is nudged, best-effort, downstream of the
+ * already-recorded coins [LAW:one-source-of-truth]. WHO may cancel resolves here (the
+ * session's channel); WHETHER that channel owns the pool is the market's judgment, at
+ * the one composition point that knows the routing [LAW:single-enforcer].
+ *
+ * A genuine refund is announced ONCE — only the fresh `refunded` arm carries the
+ * REFUNDED broadcast, never the idempotent `already-refunded` replay — with the total
+ * read back from the ledger's own recorded refund legs, never re-derived
+ * [LAW:one-source-of-truth]. A pool refunds at most once, so every refund leg in its
+ * feed belongs to this one settlement.
+ */
+export async function cancelPool(poolId: string): Promise<PoolCancelResult> {
+  const principal = await currentPrincipal();
+  if (principal === null) return { kind: 'must-authenticate' };
+
+  const channel = await getChannelService().channelByOwner(principal.id);
+  if (channel === undefined) return { kind: 'no-channel' };
+
+  const id = makePoolId(poolId);
+  if (!id.ok) return { kind: 'no-such-pool' };
+
+  // `const`, so the narrowing below flows through the aliased condition. A thrown
+  // rejection here is the exceptional, corruption-class failure (a refund leg the
+  // engine refused to form) — left to the loud server error boundary, never dressed
+  // as a routine arm [LAW:no-silent-failure]; a missing pool is the market's own
+  // typed answer.
+  const outcome = await cancelFeaturePool(id.value, channel.handle);
+
+  const freshlyRefunded = outcome.kind === 'cancelled' && outcome.refund.kind === 'refunded';
+  let refundedCoins: number | null = null;
+  if (freshlyRefunded) {
+    const refunds = (await settlementFeedOfPool(id.value)).filter((e) => e.kind === 'refund');
+    if (refunds.length === 0) {
+      throw new Error(`settlement: pool ${poolId} refunded but its feed shows no refund leg`);
+    }
+    refundedCoins = refunds.reduce((sum, e) => sum + Number(e.amount), 0);
+    await announceSettlement(channel.handle, {
+      poolTitle: outcome.pool.title,
+      settled: { kind: 'refunded', refundedCoins },
+    });
+  }
+
+  return toCancelResult(outcome, refundedCoins);
 }

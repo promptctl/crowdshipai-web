@@ -49,6 +49,18 @@ export function Chat({
               {m.settledPool.cutCoins.toLocaleString('en-US')} platform cut —{' '}
               <span className="font-semibold">{m.settledPool.title}</span>
             </div>
+          ) : m.refundedPool !== undefined ? (
+            // Pool refund: the pool settled BACK to its backers — the failure mode
+            // broadcast as plainly as the success, coins never vanishing quietly
+            // [LAW:no-silent-failure].
+            <div
+              key={m.id}
+              className="rounded-sm border border-amber-500/40 bg-amber-500/10 px-2 py-2 text-xs text-amber-300"
+            >
+              <span className="font-bold">REFUNDED</span>
+              {' '}◎ {m.refundedPool.refundedCoins.toLocaleString('en-US')} to the backers —{' '}
+              <span className="font-semibold">{m.refundedPool.title}</span>
+            </div>
           ) : m.firedEffectKind !== undefined ? (
             <div
               key={m.id}

@@ -31,6 +31,7 @@ import {
   type PoolId,
   type PoolTerms,
 } from '@crowdship/pool';
+import { createRefundEngine, type RefundEngine, type RefundOutcome } from '@crowdship/refund';
 import {
   createReleaseEngine,
   type CutPolicy,
@@ -38,6 +39,7 @@ import {
   type ReleaseEngine,
   type ReleaseOutcome,
 } from '@crowdship/release';
+import { refundReason } from '@crowdship/settlement';
 import { settlementFeed, type SettlementEvent, type SettlementRoles } from '@crowdship/settlement-feed';
 import { createCustodialRail, type SettlementRail } from '@crowdship/settlement-rail';
 import { ok, show, timestamp, type Result, type Timestamp } from '@crowdship/std';
@@ -117,11 +119,19 @@ const poolNeverUsesFacts: ObligationFacts = {
  * plus the human title it was opened under and the builder slug it ships to. The pooled total is
  * deliberately NOT a field here — it is the escrow's ledger balance, read live, never a second
  * running sum that could drift [LAW:one-source-of-truth].
+ *
+ * `cancelled` is POLICY state, not money state, and the registry is its one owner
+ * [LAW:one-source-of-truth]: a cancelled pool accepts no further pledges. It is distinct from
+ * "the escrow refunded" — an empty pool cancels with nothing to refund, so no ledger record
+ * exists to derive it from; whether coins actually moved back stays the ledger's own record,
+ * never copied here. It flips only AFTER the refund engine's money act succeeds, so a pool is
+ * never marked closed while its backers' coins are still owed [LAW:no-ambient-temporal-coupling].
  */
 interface FeaturePool {
   readonly pool: Pool;
   readonly builderSlug: string;
   readonly title: string;
+  readonly cancelled: boolean;
 }
 
 interface Market {
@@ -139,6 +149,11 @@ interface Market {
   /** The settle side: the instant a pool's target is reached, drain the escrow to the builder
    *  and skim the cut. The single authority on met-ness — the surface only offers the pool. */
   readonly releaseEngine: ReleaseEngine;
+  /** The settle-BACK side: return an unmet or cancelled escrow to the backers who funded it,
+   *  each their net recorded contribution — the failure mode built like the success path. WHO
+   *  is owed is read from the escrow's own ledger history, never a list kept here
+   *  [LAW:one-source-of-truth]. */
+  readonly refundEngine: RefundEngine;
   /** The rail both engines settle through; queried here for settled-status read from the money
    *  itself, never a flag the surface keeps [LAW:one-source-of-truth]. */
   readonly rail: SettlementRail;
@@ -171,6 +186,7 @@ const build = (): Market => {
       reason: unwrap(transactionReason('pool-release'), 'reason'),
       rail,
     }),
+    refundEngine: createRefundEngine({ query: ledger, rail }),
     rail,
     platformAccount,
     pools: new Map(),
@@ -298,7 +314,8 @@ const pledgeIdOf = (pool: Pool) => asEscrowedPledge(pool, nowInstant()).id;
 /**
  * A funding pool as a backer surface sees it: its identity and title, the target it ships at,
  * the live pooled total (the escrow balance, never a stored tally [LAW:one-source-of-truth]),
- * and whether it has already settled — read from the money via the rail, not a flag kept here.
+ * whether it has already settled — read from the money via the rail, not a flag kept here —
+ * and whether the builder has cancelled it, read from the registry that owns that policy state.
  */
 export interface FeaturePoolView {
   readonly id: PoolId;
@@ -307,6 +324,7 @@ export interface FeaturePoolView {
   readonly target: bigint;
   readonly pooled: bigint;
   readonly released: boolean;
+  readonly cancelled: boolean;
 }
 
 const viewOf = async (fp: FeaturePool): Promise<FeaturePoolView> => {
@@ -319,6 +337,7 @@ const viewOf = async (fp: FeaturePool): Promise<FeaturePoolView> => {
     target: fp.pool.target,
     pooled,
     released: settled !== undefined,
+    cancelled: fp.cancelled,
   };
 };
 
@@ -347,9 +366,13 @@ export const openFeaturePool = async (
   if (!opened.ok) {
     throw new Error(`market: pool escrow ${pool.escrowAccount} is open as ${opened.error.existing}, not escrow`);
   }
-  const fp: FeaturePool = { pool, builderSlug, title };
-  market.pools.set(id, fp);
-  return viewOf(fp);
+  const fp: FeaturePool = { pool, builderSlug, title, cancelled: false };
+  // Re-opening an existing pool id must not resurrect a cancelled pool: the registry write is
+  // first-open-wins, so the idempotent re-open returns the pool as it stands, cancellation
+  // included [LAW:one-source-of-truth].
+  const existing = market.pools.get(id);
+  if (existing === undefined) market.pools.set(id, fp);
+  return viewOf(existing ?? fp);
 };
 
 /** Every pool a builder has opened, as the backer surface sees them. A pure read over the
@@ -365,12 +388,22 @@ export const listFeaturePools = async (builderSlug: string): Promise<readonly Fe
  * pledge tips the target is the one who watches the whole pool ship. The contribution and the
  * release are each their own closed outcome the caller destructures; the view is the pool as it
  * now stands.
+ *
+ * A pledge into a CANCELLED pool is a legal, representable request — a stale watch page can
+ * make it in good faith — so it is its own typed arm, never a throw and never a contribution
+ * quietly accepted into an escrow whose refund has already settled (coins that would strand,
+ * unreturnable under the pool's already-used refund key) [LAW:types-are-the-program]
+ * [LAW:no-silent-failure]. The refusal is enforced HERE, the one place pool coins move in
+ * [LAW:single-enforcer].
  */
-export interface PledgeOutcome {
-  readonly contribution: ContributionOutcome;
-  readonly release: ReleaseOutcome<PoolTerms>;
-  readonly pool: FeaturePoolView;
-}
+export type PledgeOutcome =
+  | {
+      readonly kind: 'pledged';
+      readonly contribution: ContributionOutcome;
+      readonly release: ReleaseOutcome<PoolTerms>;
+      readonly pool: FeaturePoolView;
+    }
+  | { readonly kind: 'pool-cancelled'; readonly pool: FeaturePoolView };
 
 export const pledgeToFeaturePool = async (
   principal: Principal,
@@ -380,6 +413,7 @@ export const pledgeToFeaturePool = async (
 ): Promise<PledgeOutcome> => {
   const fp = market.pools.get(pool);
   if (fp === undefined) throw new Error(`market: no feature pool ${show(pool)}`);
+  if (fp.cancelled) return { kind: 'pool-cancelled', pool: await viewOf(fp) };
 
   const backer = walletIdOf(principal);
   await ensureAccount(backer, 'user-wallet');
@@ -397,7 +431,7 @@ export const pledgeToFeaturePool = async (
   // compare minted here, no double-release on a faithful retry [LAW:no-ambient-temporal-coupling].
   const release = await market.releaseEngine.tryRelease(asEscrowedPledge(fp.pool, nowInstant()));
 
-  return { contribution, release, pool: await viewOf(fp) };
+  return { kind: 'pledged', contribution, release, pool: await viewOf(fp) };
 };
 
 /** Offer a pool to the release engine without a new pledge — for a poll or a manual settle.
@@ -407,6 +441,74 @@ export const tryReleaseFeaturePool = async (pool: PoolId): Promise<ReleaseOutcom
   const fp = market.pools.get(pool);
   if (fp === undefined) throw new Error(`market: no feature pool ${show(pool)}`);
   return market.releaseEngine.tryRelease(asEscrowedPledge(fp.pool, nowInstant()));
+};
+
+/**
+ * Every way a builder's cancel resolves, one closed union the edge destructures
+ * [LAW:dataflow-not-control-flow]:
+ *
+ *  - `cancelled` — the pool stopped accepting pledges on THIS call, after the refund engine's
+ *    money act succeeded. The embedded `refund` says what the money did: `refunded` (coins went
+ *    back now — the arm the edge announces on), `nothing-to-refund` (an empty pool closed; no
+ *    coins ever pooled), or `already-refunded` (the money had returned on a prior settle; the
+ *    registry flag is healed to match). `refund-refused` is deliberately NOT representable
+ *    here — a cancel whose money act failed never reports cancelled [LAW:types-are-the-program].
+ *  - `already-cancelled` — an idempotent replay; nothing changed.
+ *  - `already-released` — the pool shipped; the builder is paid and there is nothing to cancel.
+ *  - `not-your-pool` — the caller is not the builder this pool belongs to. Ownership of pool
+ *    money commands is enforced HERE, the one composition point that knows the routing
+ *    [LAW:single-enforcer].
+ *  - `no-such-pool` — the id names nothing in the registry. A routine, representable request
+ *    (a stale surface, a restarted in-memory registry), so it is a typed arm rather than the
+ *    throw the read paths use — a cancel is a money COMMAND, and every way a command resolves
+ *    must be a value its caller destructures [LAW:types-are-the-program].
+ *  - `refund-refused` — the rail refused the return (most really: a release raced this cancel
+ *    and drained the escrow first; the ledger's no-overdraft rule is the single arbiter of that
+ *    race [LAW:single-enforcer]). The pool is NOT marked cancelled; loud reconciliation, never
+ *    a quiet half-state [LAW:no-silent-failure].
+ */
+export type CancelOutcome =
+  | {
+      readonly kind: 'cancelled';
+      readonly refund: Exclude<RefundOutcome<PoolTerms>, { readonly kind: 'refund-refused' }>;
+      readonly pool: FeaturePoolView;
+    }
+  | { readonly kind: 'already-cancelled'; readonly pool: FeaturePoolView }
+  | { readonly kind: 'already-released'; readonly pool: FeaturePoolView }
+  | { readonly kind: 'not-your-pool'; readonly pool: FeaturePoolView }
+  | { readonly kind: 'no-such-pool' }
+  | { readonly kind: 'refund-refused'; readonly error: Extract<RefundOutcome<PoolTerms>, { readonly kind: 'refund-refused' }>['error'] };
+
+/**
+ * A builder cancels their own funding pool: refund whatever its escrow still owes the backers,
+ * then close it to further pledges. The money moves FIRST and the registry flag flips only on a
+ * successful (or already-settled, or trivially-empty) money act, so ordering has one explicit
+ * owner and a pool is never closed while backers' coins hang unreturned
+ * [LAW:no-ambient-temporal-coupling]. WHETHER to cancel is the builder's policy decision; the
+ * engine only performs the return it is ordered to [LAW:decomposition]. WHO gets refunded is
+ * the escrow's own recorded history — this call carries no backer list [LAW:one-source-of-truth].
+ */
+export const cancelFeaturePool = async (pool: PoolId, byBuilderSlug: string): Promise<CancelOutcome> => {
+  const fp = market.pools.get(pool);
+  if (fp === undefined) return { kind: 'no-such-pool' };
+  if (fp.builderSlug !== byBuilderSlug) return { kind: 'not-your-pool', pool: await viewOf(fp) };
+  if (fp.cancelled) return { kind: 'already-cancelled', pool: await viewOf(fp) };
+
+  // A shipped pool has nothing to cancel — the courtesy read for the common case. A release
+  // landing BETWEEN this read and the refund below still cannot double-move the coins: the
+  // drained escrow fails the ledger's no-overdraft rule and surfaces as `refund-refused`.
+  const view = await viewOf(fp);
+  if (view.released) return { kind: 'already-released', pool: view };
+
+  const refund = await market.refundEngine.tryRefund(
+    asEscrowedPledge(fp.pool, nowInstant()),
+    unwrap(refundReason('pool-cancelled'), 'refund reason'),
+  );
+  if (refund.kind === 'refund-refused') return { kind: 'refund-refused', error: refund.error };
+
+  const closed: FeaturePool = { ...fp, cancelled: true };
+  market.pools.set(pool, closed);
+  return { kind: 'cancelled', refund, pool: await viewOf(closed) };
 };
 
 /** A pool's settlement money roles, assembled from the accounts this composition point

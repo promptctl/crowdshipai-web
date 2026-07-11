@@ -4,9 +4,9 @@ import type { ContributionOutcome } from '@crowdship/pool';
 import type { PurchaseOutcome } from '@crowdship/purchase';
 import type { ReleaseOutcome } from '@crowdship/release';
 
-import type { FundResult, PledgeResult, SpendResult } from '../data/buy-result';
+import type { FundResult, PledgeResult, PoolCancelResult, SpendResult } from '../data/buy-result';
 import type { PoolView, SettlementEventView } from '../data/types';
-import type { ChannelSettlementEvent, FeaturePoolView } from './market';
+import type { CancelOutcome, ChannelSettlementEvent, FeaturePoolView } from './market';
 
 /**
  * Parse an untrusted coin amount from the wire into a positive, exact count — or
@@ -86,6 +86,7 @@ export const toPoolView = (view: FeaturePoolView): PoolView => ({
   targetCoins: Number(view.target),
   pooledCoins: Number(view.pooled),
   released: view.released,
+  cancelled: view.cancelled,
 });
 
 /**
@@ -151,6 +152,48 @@ export const toSettlementView = (
  * balance and pool view are always the ledger's truth re-read after the attempt
  * [LAW:one-source-of-truth].
  */
+/**
+ * Project the market's cancel outcome onto the surface result. Pure and total over the
+ * closed {@link CancelOutcome} union — a new arm is a compile error here, never a money
+ * case the studio silently fails to report [LAW:dataflow-not-control-flow]
+ * [LAW:no-silent-failure]. The `refundedCoins` on the freshly-refunded arm is supplied by
+ * the caller from the ledger's own recorded refund legs; this mapper derives nothing
+ * [LAW:one-source-of-truth]. The `already-refunded` replay maps to `already-cancelled`:
+ * the money had returned on a prior act, so nothing newly happened for the builder to see.
+ * `refundedCoins` is `null` exactly when no fresh refund happened; a freshly-refunded
+ * outcome arriving without its figure is a caller bug surfaced loudly, never a money line
+ * rendered as zero [LAW:no-silent-failure].
+ */
+export const toCancelResult = (outcome: CancelOutcome, refundedCoins: number | null): PoolCancelResult => {
+  switch (outcome.kind) {
+    case 'cancelled': {
+      const pool = toPoolView(outcome.pool);
+      switch (outcome.refund.kind) {
+        case 'refunded': {
+          if (refundedCoins === null) {
+            throw new Error(`cancel: pool ${pool.id} refunded but no recorded refund total was supplied`);
+          }
+          return { kind: 'cancelled-refunded', pool, refundedCoins };
+        }
+        case 'nothing-to-refund':
+          return { kind: 'cancelled-empty', pool };
+        case 'already-refunded':
+          return { kind: 'already-cancelled', pool };
+      }
+    }
+    case 'already-cancelled':
+      return { kind: 'already-cancelled', pool: toPoolView(outcome.pool) };
+    case 'already-released':
+      return { kind: 'already-released', pool: toPoolView(outcome.pool) };
+    case 'not-your-pool':
+      return { kind: 'not-your-pool' };
+    case 'no-such-pool':
+      return { kind: 'no-such-pool' };
+    case 'refund-refused':
+      return { kind: 'cancel-refused' };
+  }
+};
+
 export const toPledgeResult = (
   contribution: ContributionOutcome,
   release: ReleaseOutcome<unknown>,

@@ -147,17 +147,18 @@ export const announcePresence = (builderSlug: string, count: number): Promise<vo
  * Announce a settlement moment on a builder's stream — the money moving in view of the
  * audience, the publish half of the settlement→stream seam and the twin of
  * {@link announceEffectFired}. The frame is a NUDGE plus the one line worth saying the
- * instant a pool ships: the durable money story stays the ledger's, and every watcher
- * re-reads the settlement-feed projection on receipt, so a missed or replayed frame
- * can never make the audience's view of the money wrong — only a beat stale
- * [LAW:one-source-of-truth]. The `shipped` figures ride the frame verbatim from the
- * ledger's recorded release and cut legs; this edge derives nothing.
+ * instant a pool settles — SHIPPED forward to the builder or REFUNDED back to its
+ * backers: the durable money story stays the ledger's, and every watcher re-reads the
+ * settlement-feed projection on receipt, so a missed or replayed frame can never make
+ * the audience's view of the money wrong — only a beat stale [LAW:one-source-of-truth].
+ * The `settled` figures ride the frame verbatim from the ledger's recorded legs; this
+ * edge derives nothing.
  */
 export const announceSettlement = (builderSlug: string, moment: SettlementMoment): Promise<void> => {
   const live: LiveEvent = {
     type: SETTLEMENT,
     at: clock.now(),
-    payload: moment.shipped === undefined ? { poolTitle: moment.poolTitle } : { poolTitle: moment.poolTitle, shipped: moment.shipped },
+    payload: moment.settled === undefined ? { poolTitle: moment.poolTitle } : { poolTitle: moment.poolTitle, settled: moment.settled },
   };
   return getLiveFeed().publish(liveTopicOf(builderSlug), live);
 };

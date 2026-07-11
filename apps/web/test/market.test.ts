@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   backerPrincipalIdOf,
+  cancelFeaturePool,
   channelSettlementFeed,
   coinBalanceOf,
   creditCoins,
@@ -14,11 +15,19 @@ import {
   settlementFeedOfPool,
   spendOnOffer,
   type FeaturePoolView,
+  type PledgeOutcome,
 } from '../src/server/market';
 
 const must = <T>(r: Result<T, unknown>): T => {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
   return r.value;
+};
+
+/** Narrow a pledge outcome to its money-moved arm — the tests below pledge into open
+ *  pools, so a cancelled arm is a test-setup failure surfaced loudly. */
+const pledged = (o: PledgeOutcome): Extract<PledgeOutcome, { kind: 'pledged' }> => {
+  if (o.kind !== 'pledged') throw new Error(`expected a pledged outcome, got ${o.kind}`);
+  return o;
 };
 
 // The market is a process singleton, so each test names its OWN backer so its
@@ -95,18 +104,18 @@ describe('pooled obligations that pay themselves out, end to end through the mar
     const cleo = await fundedBacker('pool-cleo', 100n);
 
     // Two pledges leave the pool short of its target: nothing ships, the engine answers pending.
-    const first = await pledgeToFeaturePool(ami, pool.id, 20n, 'p-ami');
+    const first = pledged(await pledgeToFeaturePool(ami, pool.id, 20n, 'p-ami'));
     expect(first.contribution).toMatchObject({ kind: 'contributed', observation: { pooled: 20n } });
     expect(first.release.kind).toBe('pending');
     expect(first.pool).toMatchObject({ pooled: 20n, released: false });
 
-    const second = await pledgeToFeaturePool(ben, pool.id, 20n, 'p-ben');
+    const second = pledged(await pledgeToFeaturePool(ben, pool.id, 20n, 'p-ben'));
     expect(second.release.kind).toBe('pending');
     expect(second.pool.pooled).toBe(40n);
 
     // The pledge that tips the target over is the one that watches the pool ship — released on
     // THIS call, the escrow drained to zero, the backers' coins now the builder's (minus the cut).
-    const third = await pledgeToFeaturePool(cleo, pool.id, 20n, 'p-cleo');
+    const third = pledged(await pledgeToFeaturePool(cleo, pool.id, 20n, 'p-cleo'));
     expect(third.release.kind).toBe('released');
     expect(third.pool).toMatchObject({ pooled: 0n, released: true });
 
@@ -119,7 +128,7 @@ describe('pooled obligations that pay themselves out, end to end through the mar
     const pool = await openFeaturePool('pool-wait', 'port the UI to wgpu', 100n);
     const ami = await fundedBacker('pool-wait-ami', 100n);
 
-    const pledge = await pledgeToFeaturePool(ami, pool.id, 20n, 'pw-ami');
+    const pledge = pledged(await pledgeToFeaturePool(ami, pool.id, 20n, 'pw-ami'));
     expect(pledge.release.kind).toBe('pending');
     expect(pledge.pool).toMatchObject({ pooled: 20n, released: false });
     // Nothing shipped: the coins are in escrow, gone from the backer, not yet the builder's.
@@ -130,9 +139,9 @@ describe('pooled obligations that pay themselves out, end to end through the mar
     const pool = await openFeaturePool('pool-idem', 'fix the seek bug', 100n);
     const ami = await fundedBacker('pool-idem-ami', 100n);
 
-    const first = await pledgeToFeaturePool(ami, pool.id, 30n, 'pi-ami');
+    const first = pledged(await pledgeToFeaturePool(ami, pool.id, 30n, 'pi-ami'));
     expect(first.contribution.kind).toBe('contributed');
-    const replay = await pledgeToFeaturePool(ami, pool.id, 30n, 'pi-ami');
+    const replay = pledged(await pledgeToFeaturePool(ami, pool.id, 30n, 'pi-ami'));
     expect(replay.contribution.kind).toBe('contributed');
 
     // The coins moved exactly once across both calls: pooled is 30, not 60.
@@ -151,13 +160,92 @@ describe('pooled obligations that pay themselves out, end to end through the mar
   });
 });
 
+describe('a builder cancelling a pool — the refund path, end to end through the market', () => {
+  it('refunds every backer their net contribution and closes the pool to further pledges', async () => {
+    const pool = await openFeaturePool('cancel-refund', 'a feature that will not ship', 100n);
+    const ami = await fundedBacker('cancel-ami', 100n);
+    const ben = await fundedBacker('cancel-ben', 100n);
+    await pledgeToFeaturePool(ami, pool.id, 20n, 'c-ami');
+    await pledgeToFeaturePool(ben, pool.id, 30n, 'c-ben');
+
+    const outcome = await cancelFeaturePool(pool.id, 'cancel-refund');
+    expect(outcome.kind).toBe('cancelled');
+    if (outcome.kind !== 'cancelled') throw new Error('unreachable');
+    expect(outcome.refund.kind).toBe('refunded');
+    expect(outcome.pool).toMatchObject({ cancelled: true, pooled: 0n, released: false });
+
+    // Every coin found its way home: the escrow drained back to the wallets it came from.
+    expect(await coinBalanceOf(ami)).toBe(100n);
+    expect(await coinBalanceOf(ben)).toBe(100n);
+
+    // The money story tells the failure as plainly as a success: contributions in, refunds out.
+    const feed = await settlementFeedOfPool(pool.id);
+    expect(feed.map((e) => e.kind)).toEqual(['contribution', 'contribution', 'refund', 'refund']);
+    expect(feed[feed.length - 1]?.pooledAfter).toBe(0n);
+
+    // A late pledge from a stale surface is a typed refusal, not coins into a dead escrow.
+    const late = await pledgeToFeaturePool(ami, pool.id, 10n, 'c-late');
+    expect(late.kind).toBe('pool-cancelled');
+    expect(await coinBalanceOf(ami)).toBe(100n);
+  });
+
+  it('cancels an empty pool with nothing to refund — closed, no movement invented', async () => {
+    const pool = await openFeaturePool('cancel-empty', 'never funded', 50n);
+    const outcome = await cancelFeaturePool(pool.id, 'cancel-empty');
+    expect(outcome.kind).toBe('cancelled');
+    if (outcome.kind !== 'cancelled') throw new Error('unreachable');
+    expect(outcome.refund.kind).toBe('nothing-to-refund');
+    expect(outcome.pool.cancelled).toBe(true);
+    expect(await settlementFeedOfPool(pool.id)).toEqual([]);
+  });
+
+  it('replays a cancel as already-cancelled — nothing moves twice', async () => {
+    const pool = await openFeaturePool('cancel-replay', 'cancel me twice', 50n);
+    const ami = await fundedBacker('cancel-replay-ami', 100n);
+    await pledgeToFeaturePool(ami, pool.id, 10n, 'cr-ami');
+
+    expect((await cancelFeaturePool(pool.id, 'cancel-replay')).kind).toBe('cancelled');
+    expect((await cancelFeaturePool(pool.id, 'cancel-replay')).kind).toBe('already-cancelled');
+    expect(await coinBalanceOf(ami)).toBe(100n);
+    // Still exactly one refund leg recorded — the replay moved nothing.
+    const refunds = (await settlementFeedOfPool(pool.id)).filter((e) => e.kind === 'refund');
+    expect(refunds).toHaveLength(1);
+  });
+
+  it('refuses to cancel a shipped pool — the builder is paid and stays paid', async () => {
+    const pool = await openFeaturePool('cancel-shipped', 'already out the door', 50n);
+    const ami = await fundedBacker('cancel-shipped-ami', 100n);
+    const tipping = pledged(await pledgeToFeaturePool(ami, pool.id, 50n, 'cs-ami'));
+    expect(tipping.release.kind).toBe('released');
+
+    const outcome = await cancelFeaturePool(pool.id, 'cancel-shipped');
+    expect(outcome.kind).toBe('already-released');
+    // The pool still reads shipped, not cancelled, and no refund leg ever formed.
+    const feed = await settlementFeedOfPool(pool.id);
+    expect(feed.some((e) => e.kind === 'refund')).toBe(false);
+  });
+
+  it('refuses a cancel from a builder who does not own the pool', async () => {
+    const pool = await openFeaturePool('cancel-owner', 'not yours to kill', 50n);
+    const ami = await fundedBacker('cancel-owner-ami', 100n);
+    await pledgeToFeaturePool(ami, pool.id, 10n, 'co-ami');
+
+    const outcome = await cancelFeaturePool(pool.id, 'someone-else');
+    expect(outcome.kind).toBe('not-your-pool');
+    // The pool is untouched: still open, coins still pooled.
+    expect(await coinBalanceOf(ami)).toBe(90n);
+    const pools = await listFeaturePools('cancel-owner');
+    expect(pools[0]).toMatchObject({ cancelled: false, pooled: 10n });
+  });
+});
+
 describe('the transparent settlement feed, projected from the ledger through the market', () => {
   it('tells a shipped pool’s whole money story: contributions filling, the release, and the cut in plain view', async () => {
     const pool = await openFeaturePool('feed-ship', 'wire up the overlay', 60n);
     const ami = await fundedBacker('feed-ami', 100n);
     const ben = await fundedBacker('feed-ben', 100n);
     await pledgeToFeaturePool(ami, pool.id, 20n, 'sf-ami');
-    const tipping = await pledgeToFeaturePool(ben, pool.id, 40n, 'sf-ben');
+    const tipping = pledged(await pledgeToFeaturePool(ben, pool.id, 40n, 'sf-ben'));
     expect(tipping.release.kind).toBe('released');
 
     const feed = await settlementFeedOfPool(pool.id);

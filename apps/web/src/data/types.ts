@@ -100,6 +100,10 @@ export interface PoolView {
    *  [LAW:one-source-of-truth]. */
   readonly pooledCoins: number;
   readonly released: boolean;
+  /** The builder closed this pool: pledges are refused and whatever was pooled has been
+   *  refunded — the refund movements themselves show on the settlement timeline, the
+   *  ledger's own story, never restated here [LAW:one-source-of-truth]. */
+  readonly cancelled: boolean;
 }
 
 /**
@@ -151,6 +155,12 @@ export interface ChatMessage {
    *  frame that announced the ship — the split shown in plain view, cut included, exactly as
    *  the money moved [LAW:one-source-of-truth]. */
   readonly settledPool?: { readonly title: string; readonly releasedCoins: number; readonly cutCoins: number };
+  /** Present when this line is a pool REFUND broadcast — the pool settled BACK to its backers,
+   *  the failure mode shown to the audience as plainly as the success [LAW:no-silent-failure].
+   *  One message type, one more line kind [LAW:one-type-per-behavior]. The figure is the total
+   *  of the ledger's recorded refund legs, carried whole on the live frame that announced it
+   *  [LAW:one-source-of-truth]. */
+  readonly refundedPool?: { readonly title: string; readonly refundedCoins: number };
 }
 
 /**
