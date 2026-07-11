@@ -5,10 +5,11 @@ import Link from 'next/link';
 
 import type { FundResult, PledgeResult, SpendResult } from '@/data/buy-result';
 import type { ChatResult } from '@/data/chat-result';
-import { parseChatMessage, parseFiredEffect, parseSettlement, parseViewerPresence } from '@/data/live-event';
+import { parseChatMessage, parseFiredEffect, parseSettlement, parseStreamLifecycle, parseViewerPresence } from '@/data/live-event';
 import type { ChannelView, ChatMessage, PoolView, PricedOffer, SettlementEventView } from '@/data/types';
 import { sendChat } from '@/server/chat-actions';
 import { buyCoins, buyOffer, listPools, pledgeToPool, settlementEvents } from '@/server/market-actions';
+import { channelLive } from '@/server/stream-actions';
 
 import { BuilderAvatar } from './BuilderAvatar';
 import { Chat } from './Chat';
@@ -210,6 +211,12 @@ export function WatchSurface({
   // [LAW:one-source-of-truth] — each frame carries the whole count, so the surface
   // replaces rather than accumulates [LAW:dataflow-not-control-flow].
   const [viewerCount, setViewerCount] = useState(initialViewerCount);
+  // Liveness is owned by the ingest broker's room state and read server-side at every
+  // render; this surface seeds from that read and lets lifecycle frames flip the badge
+  // the moment the builder goes live or ends, instead of at the next reload. A missed
+  // frame leaves the badge a beat stale, never a second authority
+  // [LAW:one-source-of-truth].
+  const [isLive, setIsLive] = useState(stream.isLive);
   // null === no wallet (logged-out). A real absence the surface renders as "sign in",
   // never a zero balance that would imply an empty account they do not have.
   const [balance, setBalance] = useState<number | null>(initialBalance);
@@ -242,6 +249,18 @@ export function WatchSurface({
 
   useEffect(() => {
     const source = new EventSource(`/watch/${stream.slug}/events`);
+    // The feed is LIVE-only: a lifecycle frame published while this subscription was
+    // still attaching — or during one of EventSource's silent auto-reconnects — is gone
+    // forever. So every (re)open re-reads liveness from its one authority, the broker's
+    // room state, and the badge converges on the truth instead of trusting it missed
+    // nothing [LAW:one-source-of-truth][LAW:no-ambient-temporal-coupling]. A failed
+    // re-read keeps the current view and leaves a diagnostic trail; the frames still
+    // flowing on the open stream keep correcting it.
+    source.onopen = () => {
+      channelLive(stream.slug)
+        .then(setIsLive)
+        .catch((error: unknown) => console.warn('Liveness re-read failed; badge may lag until the next frame.', error));
+    };
     const refreshMoney = () => {
       const seq = (moneyReadSeq.current += 1);
       void Promise.all([listPools(stream.slug), settlementEvents(stream.slug)])
@@ -300,6 +319,13 @@ export function WatchSurface({
       const presence = parseViewerPresence(e.data);
       if (presence !== null) {
         setViewerCount(presence.count);
+        return;
+      }
+      // A lifecycle frame flips the badge the moment the builder goes live or ends —
+      // the push echo of the same broker transition the server render reads.
+      const lifecycle = parseStreamLifecycle(e.data);
+      if (lifecycle !== null) {
+        setIsLive(lifecycle.phase === 'live');
       }
     };
     return () => source.close();
@@ -388,7 +414,7 @@ export function WatchSurface({
         <div>
           <StreamStage
             accentHue={stream.accentHue}
-            isLive={stream.isLive}
+            isLive={isLive}
             viewerCount={viewerCount}
             size="stage"
             overlay={<StreamPlayer slug={stream.slug} />}

@@ -15,7 +15,9 @@ import {
   EFFECT_FIRED_EVENT,
   PRESENCE_EVENT,
   SETTLEMENT_EVENT,
+  STREAM_LIFECYCLE_EVENT,
   type SettlementMoment,
+  type StreamLifecycleMoment,
 } from '../data/live-event';
 
 /**
@@ -50,12 +52,13 @@ const mintEventType = (label: string): LiveEventType => {
 };
 
 // The open labels each announcer below publishes under — fired effects, chat lines,
-// the live viewer count, and settlement moments, every kind riding the one feed
-// [LAW:no-mode-explosion].
+// the live viewer count, settlement moments, and stream-lifecycle transitions, every
+// kind riding the one feed [LAW:no-mode-explosion].
 const EFFECT_FIRED: LiveEventType = mintEventType(EFFECT_FIRED_EVENT);
 const CHAT_MESSAGE: LiveEventType = mintEventType(CHAT_MESSAGE_EVENT);
 const PRESENCE: LiveEventType = mintEventType(PRESENCE_EVENT);
 const SETTLEMENT: LiveEventType = mintEventType(SETTLEMENT_EVENT);
+const STREAM_LIFECYCLE: LiveEventType = mintEventType(STREAM_LIFECYCLE_EVENT);
 
 // One feed per process, the single owner of the in-memory subscriptions
 // [LAW:no-shared-mutable-globals]. Cached on globalThis so Next.js dev HMR, which
@@ -154,6 +157,25 @@ export const announcePresence = (builderSlug: string, count: number): Promise<vo
  * The `settled` figures ride the frame verbatim from the ledger's recorded legs; this
  * edge derives nothing.
  */
+/**
+ * Announce a stream-lifecycle transition on a builder's channel — go-live and end
+ * reaching every watcher the moment they happen, the publish half of the lifecycle
+ * event and the twin of {@link announceEffectFired}. It is called precisely where the
+ * ingest actually opens or closes, so the frame mirrors the broker's own transition
+ * rather than a parallel opinion of liveness: the room state stays the single
+ * authority every page render reads, and this frame only spares a watcher already on
+ * the page the wait for their next reload [LAW:one-source-of-truth]. Best-effort LIVE
+ * fan-out: a missed frame leaves a stale badge until reload, never a wrong ledger.
+ */
+export const announceStreamLifecycle = (builderSlug: string, moment: StreamLifecycleMoment): Promise<void> => {
+  const live: LiveEvent = {
+    type: STREAM_LIFECYCLE,
+    at: clock.now(),
+    payload: { phase: moment.phase },
+  };
+  return getLiveFeed().publish(liveTopicOf(builderSlug), live);
+};
+
 export const announceSettlement = (builderSlug: string, moment: SettlementMoment): Promise<void> => {
   const live: LiveEvent = {
     type: SETTLEMENT,

@@ -5,9 +5,11 @@ import {
   EFFECT_FIRED_EVENT,
   PRESENCE_EVENT,
   SETTLEMENT_EVENT,
+  STREAM_LIFECYCLE_EVENT,
   parseChatMessage,
   parseFiredEffect,
   parseSettlement,
+  parseStreamLifecycle,
   parseViewerPresence,
 } from '../src/data/live-event';
 
@@ -236,5 +238,44 @@ describe('parseSettlement', () => {
     expect(parseFiredEffect(shipped)).toBeNull();
     expect(parseChatMessage(shipped)).toBeNull();
     expect(parseViewerPresence(shipped)).toBeNull();
+  });
+});
+
+/** The exact frame the publish edge (`announceStreamLifecycle`) puts on the wire — the
+ *  builder's session going live or ending, as one of exactly two transitions. Built
+ *  here verbatim so this test fails loudly if the two halves of the seam ever drift
+ *  [LAW:one-source-of-truth]. */
+const lifecycleFrame = (payload: unknown): string =>
+  JSON.stringify({ type: STREAM_LIFECYCLE_EVENT, at: 1_700_000_000_000, payload });
+
+describe('parseStreamLifecycle', () => {
+  it('reads a go-live transition', () => {
+    expect(parseStreamLifecycle(lifecycleFrame({ phase: 'live' }))).toEqual({ phase: 'live' });
+  });
+
+  it('reads an ended transition — the end of a stream is a first-class frame, not a timeout', () => {
+    expect(parseStreamLifecycle(lifecycleFrame({ phase: 'ended' }))).toEqual({ phase: 'ended' });
+  });
+
+  it('is null for a garbled, non-JSON frame from the wire', () => {
+    expect(parseStreamLifecycle('static on the wire')).toBeNull();
+  });
+
+  it('is null for a phase this build does not know — a closed union, never a coerced boolean', () => {
+    expect(parseStreamLifecycle(lifecycleFrame({ phase: 'paused' }))).toBeNull();
+    expect(parseStreamLifecycle(lifecycleFrame({ phase: true }))).toBeNull();
+    expect(parseStreamLifecycle(lifecycleFrame({}))).toBeNull();
+    expect(parseStreamLifecycle(lifecycleFrame('live'))).toBeNull();
+  });
+
+  it('does not claim its siblings’ frames, and they do not claim its', () => {
+    expect(parseStreamLifecycle(firedFrame('shoutout'))).toBeNull();
+    expect(parseStreamLifecycle(chatFrame('mara', 'hi'))).toBeNull();
+    expect(parseStreamLifecycle(presenceFrame(3))).toBeNull();
+    const live = lifecycleFrame({ phase: 'live' });
+    expect(parseFiredEffect(live)).toBeNull();
+    expect(parseChatMessage(live)).toBeNull();
+    expect(parseViewerPresence(live)).toBeNull();
+    expect(parseSettlement(live)).toBeNull();
   });
 });
