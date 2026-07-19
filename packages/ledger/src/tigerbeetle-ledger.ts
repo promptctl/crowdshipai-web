@@ -40,12 +40,15 @@ import type { AccountMovement, LedgerQuery, MovementDirection } from './query.js
 
 // tigerbeetle-node is a CommonJS native addon; under NodeNext ESM its enum exports
 // are not statically importable as named bindings, so it is loaded through
-// `createRequire` and consumed by value here while its object shapes come in as
-// erased `import type`s above. One load, reused for the life of the module.
+// `createRequire` and consumed by value while its object shapes come in as erased
+// `import type`s above. The load is LAZY and memoized: importing this module — for a
+// sibling export in the package index, or for one of those types — must not touch the
+// native edge; only actually constructing the ledger does [LAW:effects-at-boundaries].
+// This is what lets a build that only ever uses the in-memory ledger ship without the
+// addon present at all. One load, reused for the life of the module.
 const nodeRequire = createRequire(import.meta.url);
-const tb = nodeRequire('tigerbeetle-node') as typeof import('tigerbeetle-node');
-const { createClient, AccountFlags, AccountFilterFlags, TransferFlags, CreateAccountStatus, CreateTransferStatus } =
-  tb;
+let tbCache: typeof import('tigerbeetle-node') | undefined;
+const tb = (): typeof import('tigerbeetle-node') => (tbCache ??= nodeRequire('tigerbeetle-node'));
 
 /** The cluster this ledger talks to. The buy/sell rate and every other policy
  *  live elsewhere; here is only where the coins are kept. */
@@ -81,7 +84,8 @@ const kindOfCode = (code: number): AccountKind | undefined =>
 // seam and the stream's transparent settlement view can read point-in-time balances
 // from the engine's own history without reopening accounts.
 const flagsFor = (kind: AccountKind): number =>
-  AccountFlags.history | (mayGoNegative(kind) ? AccountFlags.none : AccountFlags.debits_must_not_exceed_credits);
+  tb().AccountFlags.history |
+  (mayGoNegative(kind) ? tb().AccountFlags.none : tb().AccountFlags.debits_must_not_exceed_credits);
 
 // A stable 128-bit name for an opaque domain string. SHA-256 truncated to 128
 // bits: the collision probability across any realistic number of accounts or
@@ -121,8 +125,9 @@ const msCeilingNs = (ms: Timestamp): bigint => (BigInt(ms) + 1n) * 1_000_000n - 
 const HISTORY_PAGE = 8189;
 
 // Both the account-side debit and credit transfers, oldest first: the full set of
-// movements touching an account, in commit order.
-const HISTORY_FLAGS = AccountFilterFlags.debits | AccountFilterFlags.credits;
+// movements touching an account, in commit order. A function, not a const, so it does
+// not touch the native addon until a query actually runs [LAW:effects-at-boundaries].
+const historyFlags = (): number => tb().AccountFilterFlags.debits | tb().AccountFilterFlags.credits;
 
 // Re-brand a value read back from the engine through the kernel's own constructor —
 // the single authority on these invariants [LAW:single-enforcer]. A recorded value
@@ -219,16 +224,16 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
     // flags or the encoded kind code, both of which the engine reports as a
     // mismatch — that is the kind-conflict, read back so the caller sees what the
     // account already is.
-    if (status === CreateAccountStatus.created || status === CreateAccountStatus.exists) {
+    if (status === tb().CreateAccountStatus.created || status === tb().CreateAccountStatus.exists) {
       // The account is open under this id; record the verbatim id behind its engine
       // fingerprint so the audit side can name it as a counterparty. Idempotent.
       await this.names.record(accountTbId(account.id), account.id);
       return ok(undefined);
     }
     if (
-      status === CreateAccountStatus.exists_with_different_flags ||
-      status === CreateAccountStatus.exists_with_different_user_data_32 ||
-      status === CreateAccountStatus.exists_with_different_code
+      status === tb().CreateAccountStatus.exists_with_different_flags ||
+      status === tb().CreateAccountStatus.exists_with_different_user_data_32 ||
+      status === tb().CreateAccountStatus.exists_with_different_code
     ) {
       const [existing] = await this.client.lookupAccounts([accountTbId(account.id)]);
       const existingKind = existing === undefined ? undefined : kindOfCode(existing.user_data_32);
@@ -329,13 +334,13 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
       code: CODE,
       // All legs but the last are linked, so the whole movement commits or none of
       // it does — atomicity is the engine's, not ours.
-      flags: i < last ? TransferFlags.linked : TransferFlags.none,
+      flags: i < last ? tb().TransferFlags.linked : tb().TransferFlags.none,
       timestamp: 0n,
     }));
 
     const results = await this.client.createTransfers(batch);
 
-    if (results.every((r) => r.status === CreateTransferStatus.created)) {
+    if (results.every((r) => r.status === tb().CreateTransferStatus.created)) {
       const head = results[0];
       if (head === undefined) throw new Error('ledger corruption: created movement returned no result');
       // Keep the verbatim reason beside the engine fingerprint it was recorded under,
@@ -348,7 +353,7 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
     // Nothing was applied — a linked chain commits whole or not at all, and an
     // already-recorded id commits nothing — so it is safe to classify why the engine
     // refused without unwinding any partial state.
-    if (results.some((r) => r.status === CreateTransferStatus.id_already_failed)) {
+    if (results.some((r) => r.status === tb().CreateTransferStatus.id_already_failed)) {
       // A prior post under this key already failed; the engine remembers failed ids
       // forever, so the key is terminally spent — a corrected retry must use a fresh
       // key. Refused as a value, never thrown [LAW:no-silent-failure].
@@ -359,7 +364,7 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
     // real cause is the single leg with a substantive status.
     const causeIndex = results.findIndex(
       (r) =>
-        r.status !== CreateTransferStatus.created && r.status !== CreateTransferStatus.linked_event_failed,
+        r.status !== tb().CreateTransferStatus.created && r.status !== tb().CreateTransferStatus.linked_event_failed,
     );
     const cause = results[causeIndex];
     const leg = request.transfers[causeIndex];
@@ -368,9 +373,9 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
     }
 
     switch (cause.status) {
-      case CreateTransferStatus.exceeds_credits:
+      case tb().CreateTransferStatus.exceeds_credits:
         return err({ kind: 'would-overdraft', account: leg.from });
-      case CreateTransferStatus.exceeds_debits:
+      case tb().CreateTransferStatus.exceeds_debits:
         return err({ kind: 'would-overdraft', account: leg.to });
       default:
         // The engine refused for a reason that is not a money rule. Under correct
@@ -443,7 +448,7 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
       timestamp_min: 0n,
       timestamp_max: msCeilingNs(asOf),
       limit: 1,
-      flags: HISTORY_FLAGS | AccountFilterFlags.reversed,
+      flags: historyFlags() | tb().AccountFilterFlags.reversed,
     });
     if (latest === undefined) return 0n;
     return latest.credits_posted - latest.debits_posted;
@@ -532,7 +537,7 @@ export class TigerBeetleLedger implements Ledger, LedgerQuery {
         timestamp_min: cursorMin,
         timestamp_max: 0n,
         limit: HISTORY_PAGE,
-        flags: HISTORY_FLAGS,
+        flags: historyFlags(),
       });
       all.push(...page);
       const last = page[page.length - 1];
@@ -562,7 +567,7 @@ export const createTigerBeetleLedger = (
   config: TigerBeetleConfig,
   names: NameStore = createInMemoryNameStore(),
 ): Ledger & LedgerQuery => {
-  const client = createClient({
+  const client = tb().createClient({
     cluster_id: config.clusterId,
     replica_addresses: [...config.replicaAddresses],
   });

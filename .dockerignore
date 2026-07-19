@@ -1,0 +1,16 @@
+# The image is built from source inside the builder stage; anything generated,
+# machine-local, or secret stays out so the build context is source-only and the
+# result is reproducible [LAW:one-source-of-truth — one authoritative input set].
+**/node_modules
+**/.next
+**/.data
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/test-results
+**/playwright-report
+.git
+.github
+**/.env
+**/.env*.local
+**/*.log

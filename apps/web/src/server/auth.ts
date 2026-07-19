@@ -33,8 +33,17 @@ import { getAuthService } from './identity';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12; // 12 hours
 
 // In production the host must not be inferred from an attacker-controllable header,
-// and the signing secret must be real — fail loudly rather than booting insecure.
-if (process.env.NODE_ENV === 'production' && (process.env.AUTH_SECRET?.length ?? 0) < 32) {
+// and the signing secret must be real — fail loudly rather than booting insecure. This is
+// a BOOT guarantee, not a build one: `next build` evaluates this module to collect page data
+// with no secret present (and none is used — nothing authenticates during static generation),
+// so the check is skipped in the build phase Next marks with NEXT_PHASE. It stays active at
+// runtime (server phase or unset), where an absent secret must still halt the boot
+// [LAW:no-silent-failure][LAW:no-ambient-temporal-coupling — the check owns runtime, not the build].
+if (
+  process.env.NEXT_PHASE !== 'phase-production-build' &&
+  process.env.NODE_ENV === 'production' &&
+  (process.env.AUTH_SECRET?.length ?? 0) < 32
+) {
   throw new Error('AUTH_SECRET must be set to a 32+ character secret in production');
 }
 declare module 'next-auth' {
@@ -56,10 +65,14 @@ declare module 'next-auth/jwt' {
 }
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  // Trust the request host only outside production; in production the deployment
-  // pins AUTH_URL so a poisoned Host/X-Forwarded-Host header cannot redirect or
-  // re-scope cookies [LAW:no-silent-failure].
-  trustHost: process.env.NODE_ENV !== 'production',
+  // Self-hosted Auth.js v5 (non-Vercel) MUST trust the host or it throws UntrustedHost on
+  // every request — AUTH_URL alone does not lift that guard, it only pins the canonical origin
+  // for redirects and cookie scope. Trusting the raw Host is only safe because a single
+  // enforcer guarantees the Host is ours: the edge middleware refuses any request whose Host is
+  // not the one AUTH_URL pins [LAW:single-enforcer], standing in for the validating ingress this
+  // deployment does not yet have. Hardening that boundary into TLS + a real reverse proxy is the
+  // tracked HTTPS/domain follow-on; until then the middleware is the host boundary.
+  trustHost: true,
   session: { strategy: 'jwt', maxAge: SESSION_MAX_AGE_SECONDS },
   pages: { signIn: '/login' },
   providers: [
