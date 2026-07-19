@@ -65,11 +65,13 @@ declare module 'next-auth/jwt' {
 }
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  // Self-hosted behind our own ingress: Auth.js must be told to trust the request host,
-  // and AUTH_URL alone does NOT do that in v5 (it sets callback URLs, not host trust). The
-  // deployment is responsible for terminating requests only for the host it serves, so the
-  // Host header is not attacker-controllable here [LAW:single-enforcer — the ingress owns the
-  // host boundary]. AUTH_URL still pins the canonical origin for redirects and cookie scope.
+  // Self-hosted Auth.js v5 (non-Vercel) MUST trust the host or it throws UntrustedHost on
+  // every request — AUTH_URL alone does not lift that guard, it only pins the canonical origin
+  // for redirects and cookie scope. Trusting the raw Host is only safe because a single
+  // enforcer guarantees the Host is ours: the edge middleware refuses any request whose Host is
+  // not the one AUTH_URL pins [LAW:single-enforcer], standing in for the validating ingress this
+  // deployment does not yet have. Hardening that boundary into TLS + a real reverse proxy is the
+  // tracked HTTPS/domain follow-on; until then the middleware is the host boundary.
   trustHost: true,
   session: { strategy: 'jwt', maxAge: SESSION_MAX_AGE_SECONDS },
   pages: { signIn: '/login' },

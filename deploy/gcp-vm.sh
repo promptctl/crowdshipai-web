@@ -20,7 +20,7 @@
 #   LIVEKIT_API_SECRET   LiveKit API secret
 # Optional env (defaults shown):
 #   PROJECT=vertical-augury-494703-p6  REGION=us-central1  ZONE=us-central1-a
-#   IMAGE=us-central1-docker.pkg.dev/$PROJECT/crowdship/web:v1
+#   IMAGE=us-central1-docker.pkg.dev/$PROJECT/crowdship/web:v2
 #   MACHINE_TYPE=e2-small  INSTANCE=crowdship-web
 set -euo pipefail
 
@@ -33,12 +33,23 @@ IMAGE="${IMAGE:-${REGION}-docker.pkg.dev/${PROJECT}/crowdship/web:v2}"
 
 : "${AUTH_SECRET:?set AUTH_SECRET (openssl rand -hex 32)}"
 
-# The static IP is the app's public identity: it must be known before boot because the
-# production auth config pins AUTH_URL to it (a poisoned Host header cannot then re-scope the
-# session cookie) [LAW:no-silent-failure]. auth.ts sets trustHost=false in production for exactly
-# this reason, so AUTH_URL is mandatory, not optional.
+# The static IP is the app's public identity: it must be known before boot because AUTH_URL is
+# derived from it, and AUTH_URL is what the app treats as its one canonical host. Auth.js runs
+# with trustHost=true (self-hosted v5 requires it), and the app's edge middleware refuses any
+# request whose Host is not AUTH_URL's host — one host boundary [LAW:single-enforcer] — so AUTH_URL
+# is mandatory: it both pins redirect/cookie origin AND defines the host the middleware allows.
 IP="$(gcloud compute addresses describe crowdship-web-ip --region="$REGION" --project="$PROJECT" --format='value(address)')"
 AUTH_URL="http://${IP}"
+
+# Secrets are interpolated into a single-quoted position in the generated startup script below;
+# escape any embedded single quote so a value the caller supplies can never break that quoting
+# (the classic '\'' dance) [LAW:no-silent-failure]. openssl-hex secrets never contain one, but the
+# script constrains its input to "set", not "hex-only", so it must not trust the shape.
+esc() { printf "%s" "${1:-}" | sed "s/'/'\\\\''/g"; }
+AUTH_SECRET_Q="$(esc "$AUTH_SECRET")"
+LIVEKIT_URL_Q="$(esc "${LIVEKIT_URL:-}")"
+LIVEKIT_API_KEY_Q="$(esc "${LIVEKIT_API_KEY:-}")"
+LIVEKIT_API_SECRET_Q="$(esc "${LIVEKIT_API_SECRET:-}")"
 
 # The startup script runs as root on the VM: authenticate docker to Artifact Registry with the
 # VM's own service-account credentials, then run the one container with the data volume mounted
@@ -59,11 +70,11 @@ docker rm -f crowdship-web 2>/dev/null || true
 docker run -d --name crowdship-web --restart always \\
   -p 80:3000 \\
   -v /var/lib/crowdship-data:/app/apps/web/.data \\
-  -e AUTH_SECRET='${AUTH_SECRET}' \\
+  -e AUTH_SECRET='${AUTH_SECRET_Q}' \\
   -e AUTH_URL='${AUTH_URL}' \\
-  -e LIVEKIT_URL='${LIVEKIT_URL:-}' \\
-  -e LIVEKIT_API_KEY='${LIVEKIT_API_KEY:-}' \\
-  -e LIVEKIT_API_SECRET='${LIVEKIT_API_SECRET:-}' \\
+  -e LIVEKIT_URL='${LIVEKIT_URL_Q}' \\
+  -e LIVEKIT_API_KEY='${LIVEKIT_API_KEY_Q}' \\
+  -e LIVEKIT_API_SECRET='${LIVEKIT_API_SECRET_Q}' \\
   ${IMAGE}
 EOF
 

@@ -23,7 +23,7 @@ The image is built by Cloud Build into Artifact Registry, then the VM pulls it a
 ```bash
 PROJECT=vertical-augury-494703-p6 REGION=us-central1
 # 1. Build the image from source (linux/amd64) into Artifact Registry
-gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT/crowdship/web:v1 \
+gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT/crowdship/web:v2 \
   --project=$PROJECT --region=$REGION
 
 # 2. Deploy the VM (reads secrets from the environment; see below)
@@ -41,7 +41,7 @@ One-time infrastructure the script assumes already exists (created once, idempot
 | Var | Required | Why |
 |-----|----------|-----|
 | `AUTH_SECRET` | yes | 32+ char session-cookie signing key; the server refuses to boot without it in production. |
-| `AUTH_URL` | yes | Pins the trusted host so a poisoned `Host` header can't re-scope the cookie (`auth.ts` sets `trustHost=false` in production). The script derives it from the static IP. |
+| `AUTH_URL` | yes | Defines the app's one canonical host. `auth.ts` runs with `trustHost: true` (self-hosted Auth.js v5 requires it), and the edge middleware refuses any request whose `Host` isn't `AUTH_URL`'s host — so `AUTH_URL` both pins the redirect/cookie origin and defines the host the middleware allows. The script derives it from the static IP. A validating ingress (TLS + reverse proxy) is the tracked hardening follow-on. |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | for streaming | Real video ingest/playback. Omit and `stream.ts` falls back to the in-memory broker (no real stream). |
 
 ## Rollback

@@ -1,4 +1,10 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// `import.meta.dirname` is undefined before Node 21.2, where a build would throw a cryptic
+// "Cannot read properties of undefined"; derive the dir from import.meta.url instead so an
+// older-Node build resolves correctly rather than failing opaquely [LAW:no-silent-failure].
+const here = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -9,7 +15,7 @@ const nextConfig = {
   output: 'standalone',
   // apps/web lives in a pnpm monorepo; trace from the workspace root so standalone follows the
   // symlinked @crowdship/* workspace packages, not just apps/web's own node_modules.
-  outputFileTracingRoot: join(import.meta.dirname, '../../'),
+  outputFileTracingRoot: join(here, '../../'),
   // The identity packages ship raw TypeScript source (no build step), so Next
   // must transpile them like first-party code [LAW:one-source-of-truth — one copy
   // of the source, consumed directly]. @crowdship/node-std is the shared node-runtime
