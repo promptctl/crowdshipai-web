@@ -42,13 +42,15 @@ ENV PORT=3000
 COPY --from=builder /repo/apps/web/.next/standalone ./
 COPY --from=builder /repo/apps/web/.next/static ./apps/web/.next/static
 
-# The app writes its SQLite stores under cwd/.data, and server.js chdirs into apps/web, so
-# the durable state lives here. Declared a volume so a host disk mounts over it and signups,
-# menus, and moderation survive a container replacement [LAW:one-source-of-truth — the data
-# has one home, outside the image].
+# The app writes its SQLite stores under cwd/.data. Rather than depend on server.js chdiring
+# into apps/web (an ambient assumption that a future Next could drop, silently sending data to
+# an unmounted path), cwd is pinned to apps/web via WORKDIR — so cwd/.data is deterministically
+# /app/apps/web/.data [LAW:no-ambient-temporal-coupling]. Declared a volume so a host disk mounts
+# over it and signups, menus, and moderation survive a container replacement [LAW:one-source-of-truth].
 RUN mkdir -p /app/apps/web/.data
 VOLUME /app/apps/web/.data
 
+WORKDIR /app/apps/web
 EXPOSE 3000
-# cwd is /app; server.js chdirs to /app/apps/web itself.
-CMD ["node", "apps/web/server.js"]
+# cwd is /app/apps/web, so the data dir is fixed regardless of server.js's own chdir.
+CMD ["node", "server.js"]

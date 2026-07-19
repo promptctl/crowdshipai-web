@@ -13,12 +13,13 @@
 # artifact carries no credential [LAW:effects-at-boundaries]. Hardening these into Secret Manager
 # instead of instance metadata is crowdshipai-platform-m5t.8.
 #
-# Required env:
-#   AUTH_SECRET          32+ char secret for the session-cookie signing key
-#   LIVEKIT_URL          wss URL of the LiveKit SFU (streaming; omit to run with the in-memory fake)
+# Required env (the script enforces AUTH_SECRET with :? and fails without it):
+#   AUTH_SECRET          32+ char secret for the session-cookie signing key. MUST be stable across
+#                        deploys — a new value invalidates every live session cookie.
+# Optional env (defaults shown):
+#   LIVEKIT_URL          wss URL of the LiveKit SFU (streaming; omit and the app uses the in-memory fake)
 #   LIVEKIT_API_KEY      LiveKit API key
 #   LIVEKIT_API_SECRET   LiveKit API secret
-# Optional env (defaults shown):
 #   PROJECT=vertical-augury-494703-p6  REGION=us-central1  ZONE=us-central1-a
 #   IMAGE=us-central1-docker.pkg.dev/$PROJECT/crowdship/web:v2
 #   MACHINE_TYPE=e2-small  INSTANCE=crowdship-web

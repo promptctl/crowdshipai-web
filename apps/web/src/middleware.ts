@@ -14,16 +14,26 @@ import { NextResponse, type NextRequest } from 'next/server';
  * variability carried in the value, not a branch that conditionally skips the check
  * [LAW:dataflow-not-control-flow].
  */
+// Computed once, on the FIRST request — never at module-eval/build, so it reads the runtime
+// AUTH_URL the container is given, not a build-time value [LAW:no-ambient-temporal-coupling]. The
+// URL is parsed a single time and the host cached; every later request is one string compare.
+let hostComputed = false;
+let cachedHost: string | undefined;
 const allowedHost = (): string | undefined => {
-  const authUrl = process.env.AUTH_URL;
-  if (authUrl === undefined || authUrl === '') return undefined;
-  try {
-    return new URL(authUrl).host;
-  } catch {
-    // A malformed AUTH_URL is a deployment error to surface, not to swallow into
-    // "allow everything" — an unparseable pin fails closed [LAW:no-silent-failure].
-    return '\0no-valid-host';
+  if (!hostComputed) {
+    const authUrl = process.env.AUTH_URL;
+    if (authUrl !== undefined && authUrl !== '') {
+      try {
+        cachedHost = new URL(authUrl).host;
+      } catch {
+        // A malformed AUTH_URL is a deployment error to surface, not to swallow into
+        // "allow everything" — an unparseable pin fails closed [LAW:no-silent-failure].
+        cachedHost = '\0no-valid-host';
+      }
+    }
+    hostComputed = true;
   }
+  return cachedHost;
 };
 
 export function middleware(request: NextRequest): NextResponse {

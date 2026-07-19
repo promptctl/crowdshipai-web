@@ -11,7 +11,14 @@ file** under `cwd/.data` (`apps/web/src/server/identity.ts`), written by one pro
 target represents that shape honestly instead of contradicting it — so **not** Cloud Run (ephemeral
 disk, autoscaled to many instances would split-brain the DB and wipe it on cold start). The boot
 disk holds `/var/lib/crowdship-data`, mounted into the container at `/app/apps/web/.data`, so
-signups, menus, and moderation survive a container replacement.
+signups, menus, and moderation survive a **container** replacement (a reboot or image restart on the
+same VM).
+
+> **Durability caveat:** the store lives on the VM's *boot* disk, and `gcp-vm.sh` deletes and
+> recreates the VM on each run — so a **redeploy resets the store**. Data survives container
+> restarts, not VM recreation. Moving `/var/lib/crowdship-data` onto a **separate persistent disk**
+> that outlives the VM is the durability follow-on (with `m5t.6`); acceptable for now only because
+> the coin economy is a fake and there are no real users yet.
 
 > Coins are still the in-memory stand-in (`apps/web/src/server/market.ts`) — no real money moves.
 > Wiring TigerBeetle + Stripe is the real-money follow-on (`payments-rky.*`), tracked separately.
@@ -26,15 +33,26 @@ PROJECT=vertical-augury-494703-p6 REGION=us-central1
 gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT/crowdship/web:v2 \
   --project=$PROJECT --region=$REGION
 
-# 2. Deploy the VM (reads secrets from the environment; see below)
-set -a; . ../apps/web/.env.local; set +a     # AUTH_SECRET, LIVEKIT_* — never committed
-AUTH_SECRET=$(openssl rand -hex 32) ./deploy/gcp-vm.sh
+# 2a. FIRST deploy only — generate the signing key ONCE and store it, then deploy:
+AUTH_SECRET=$(openssl rand -hex 32)
+echo "AUTH_SECRET=$AUTH_SECRET" >> ../apps/web/.env.local   # persist it (never committed)
+set -a; . ../apps/web/.env.local; set +a                    # AUTH_SECRET + LIVEKIT_*
+./deploy/gcp-vm.sh
+
+# 2b. EVERY LATER deploy — REUSE the stored key (regenerating it logs every user out):
+set -a; . ../apps/web/.env.local; set +a                    # AUTH_SECRET + LIVEKIT_*
+./deploy/gcp-vm.sh
 ```
+
+`AUTH_SECRET` must be **stable across deploys** — a fresh value makes every live JWT cookie
+unverifiable and force-logs-out all users. Persisting it in a store (Secret Manager) is `m5t.8`.
 
 One-time infrastructure the script assumes already exists (created once, idempotently):
 - Artifact Registry repo `crowdship` (docker) in the region
 - Static external IP `crowdship-web-ip`
 - Firewall rule `crowdship-web-allow-http` (tcp:80,443 → tag `crowdship-web`)
+- Service account `breadly@<project>.iam.gserviceaccount.com` (the VM's identity; needs at least
+  **Artifact Registry Reader** to pull the image and **Logs Writer**) — the script pins the VM to it
 
 ## Runtime env (contract)
 
